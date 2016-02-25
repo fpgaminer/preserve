@@ -39,10 +39,14 @@ I am actively developing this project, so it is not stable or ready for general 
    This will restore the backup named `name-of-backup-to-restore`, extracting its contents to `/path/to/restore/it/to/`
 
 ## Build
+```
 cargo build
+```
 
 ## Test
+```
 cargo test
+```
 
 ## Details
 It's easiest to understand Preserve by going through how it creates a backup.  When you tell Preserve to create a backup, it walks the specified path looking for all files and folders.  It collects information about all those files and folders (name, permissions, mtime, size) in a tree data structure.  Then it goes through all the files and reads their contents.  It reads file contents 1MB at a time.  For each 1MB chunk, it encrypts the chunk using convergent encryption.  Convergent encryption is determinsitic, so given the same 1MB chunk it will output the same 1MB encrypted block (plus id and mac).  Each block also has a small (32 bytes) unique identifier associated with it.  So after Preserve has finished reading all the chunks of a file, it stores the contents in the tree data structure as a list of these unique identifiers, and stores the actual blocks on the backend.  When it encounters the same block twice, it has to store the metadata twice, but the actual encrypted data only gets stored once on the backend.  This is how Preserve achieves its deduplication.  If you create one backup, and then create another of the same exact data, Preserve won't have to store any new blocks on the backend.  It would only need to store a new set of metadata.
