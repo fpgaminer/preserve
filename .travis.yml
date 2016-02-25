@@ -1,0 +1,12 @@
+language: rust
+sudo: false
+rust:
+  - stable
+  - beta
+addons:
+  apt:
+    packages:
+      - liblzma-dev
+script:
+  - cargo build --verbose
+  - cargo test --verbose

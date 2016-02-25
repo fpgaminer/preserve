@@ -1,0 +1,17 @@
+[package]
+name = "rust-acd"
+version = "0.1.0"
+authors = ["fpgaminer <fpgaminer@bitcoin-mining.com>"]
+
+[lib]
+name = "acd"
+
+[dependencies]
+hyper = "^0.7"
+url = "^0.5"
+multipart = "^0.4"
+mime = "^0.1"
+rustc-serialize = "^0.3"
+time = "^0.1"
+rust-crypto = "^0.2"
+rusqlite = "^0.6"
