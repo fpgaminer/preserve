@@ -53,4 +53,4 @@ It's easiest to understand Preserve by going through how it creates a backup.  W
 
 When all files have been traversed, the tree data structure is serialized to JSON, compressed with XZ, encrypted using a public key, and then stored at the backend.
 
-Various caches are used to speed this process up.  If a file hasn't changed since Preserve last backed it up, then it will pull its metadata and list of content identifiers from cache.  So it won't actuall have to re-read the file.
+Various caches are used to speed this process up.  If a file hasn't changed since Preserve last backed it up, then it will pull its metadata and list of content identifiers from cache.  So it won't actually have to re-read the file.
