@@ -8,35 +8,35 @@ I am actively developing this project, so it is not stable or ready for general 
 
 1. Generate a keyfile
 
-    ```
-    preserve keygen --keyfile keyfile
-    ```
+   ```
+   preserve keygen --keyfile keyfile
+   ```
 
-Make sure to store this keyfile in a safe place.  Anyone who has access to this keyfile can read your backups and/or corrupt them.
+    Make sure to store this keyfile in a safe place.  Anyone who has access to this keyfile can read your backups and/or corrupt them.
 
 2. Create a backup
 
-    ```
-    preserve create --keyfile keyfile --backend file --backend-path /path/to/my/backups/ my-backup-`date +%Y-%m-%d_%H-%M-%S` /home/me/
-    ```
+   ```
+   preserve create --keyfile keyfile --backend file --backend-path /path/to/my/backups/ my-backup-`date +%Y-%m-%d_%H-%M-%S` /home/me/
+   ```
 
-This will create a backup of everything inside `/home/me/`, the backup will be called something like `my-backup-2016-02-25_11-56-51`, the backup will be stored in the filesystem at `/path/to/my/backups`.  To take advantage of deduplication you should store all your backups in the same place.  If you backup multiple machines, you could use an external drive or NAS.  If you use the same keyfile for all machines then Preserve will dedup across all machines.
+   This will create a backup of everything inside `/home/me/`, the backup will be called something like `my-backup-2016-02-25_11-56-51`, the backup will be stored in the filesystem at `/path/to/my/backups`.  To take advantage of deduplication you should store all your backups in the same place.  If you backup multiple machines, you could use an external drive or NAS.  If you use the same keyfile for all machines then Preserve will dedup across all machines.
 
-Amazon Cloud Drive is also supported as a backend using `--backend acd`.  Setup instructions for ACD are forthcoming.
+   Amazon Cloud Drive is also supported as a backend using `--backend acd`.  Setup instructions for ACD are forthcoming.
 
 3. List backups
 
-    ```
-    preserve list --keyfile keyfile --backend file --backend-path /path/to/my/backups/
-    ```
+   ```
+   preserve list --keyfile keyfile --backend file --backend-path /path/to/my/backups/
+   ```
 
 3. Restore a backup
 
-    ```
-    preserve restore --keyfile keyfile --backend file --backend-path /path/to/my/backups/ name-of-backup-to-restore /path/to/restore/it/to/
-    ```
+   ```
+   preserve restore --keyfile keyfile --backend file --backend-path /path/to/my/backups/ name-of-backup-to-restore /path/to/restore/it/to/
+   ```
 
-    This will restore the backup named `name-of-backup-to-restore`, extracting its contents to `/path/to/restore/it/to/`
+   This will restore the backup named `name-of-backup-to-restore`, extracting its contents to `/path/to/restore/it/to/`
 
 ## Build
 cargo build
