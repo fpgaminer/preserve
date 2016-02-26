@@ -34,3 +34,4 @@ Minor:
  * Grab the inodes of our cache files, and then skip those during backup.
  * Maybe store the target directory canonical path in the Archive data structure during archive creation.  All file paths are relative to it, and the idea is that it's like tar which doesn't store the absolute path.  But maybe we should store it anyway, since it's useful information.  It wouldn't normally be used during extraction.
  * File backend should create blocks and archives with full read permission, no write permission, no execute permission.
+ * integration_test_1 is a mess...
