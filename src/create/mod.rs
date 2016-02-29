@@ -11,12 +11,24 @@ use backend::{AcdBackend, FileBackend, Backend};
 use archive::{Archive, File};
 use rusqlite;
 
+#[derive(Default)]
+struct Config {
+	/// If true, follow symlinks.
+	/// If false, symlinks are saved as symlinks in the archive.
+	pub dereference_symlinks: bool,
+	/// If true, follow hardlinks.
+	/// If false, hardlink are saved as hardlinks in the archive.
+	pub dereference_hardlinks: bool,
+}
+
 
 pub fn execute(args: &[String]) {
 	let mut opts = Options::new();
 	opts.reqopt("", "keyfile", "set keyfile", "NAME");
 	opts.reqopt("", "backend", "set backend", "BACKEND");
 	opts.optopt("", "backend-path", "set backend path", "PATH");
+	opts.optflag("", "dereference", "follow symlinks");
+	opts.optflag("", "hard-dereference", "follow hardlinks");
 
 	let matches = match opts.parse(args) {
 		Ok(m) => m,
@@ -24,12 +36,16 @@ pub fn execute(args: &[String]) {
 	};
 
 	if matches.free.len() != 2 {
-		println!("Usage: preserve create backup-name directory-to-backup [OPTIONS]");
+		println!("Usage: preserve create [OPTIONS] backup-name directory-to-backup");
 		return;
 	}
 
+	let mut config = Config::default();
 	let backup_name = matches.free[0].clone();
 	let target_directory = Path::new(&matches.free[1].clone()).canonicalize().unwrap();
+
+	config.dereference_symlinks = matches.opt_present("dereference");
+	config.dereference_hardlinks = matches.opt_present("hard-dereference");
 
 	let mut reader = BufReader::new(match matches.opt_str("keyfile") {
 		Some(path) => fs::File::open(path).unwrap(),
@@ -59,14 +75,15 @@ pub fn execute(args: &[String]) {
 	cache_conn.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", &[]).unwrap();
 	cache_conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", &[]).unwrap();
 
-	let (mut files, total_backup_size) = walk(target_directory.clone(), 0);
+	let (mut files, total_backup_size) = walk(&config, target_directory.clone(), 0);
 	let mut progress = 0u64;
 
-	read_files(&mut files, target_directory, &block_store, &mut *backend, total_backup_size, &mut progress, &cache_conn);
+	read_files(&mut files, &target_directory, &block_store, &mut *backend, total_backup_size, &mut progress, &cache_conn);
 
 	let archive = Archive {
 		version: 0x00000001,
 		name: backup_name,
+		original_path: target_directory.to_str().unwrap().to_string(),
 		files: files,
 	};
 
@@ -76,7 +93,7 @@ pub fn execute(args: &[String]) {
 	println!("Done");
 }
 
-fn walk<P: AsRef<Path>>(path: P, depth: usize) -> (Vec<File>, u64) {
+fn walk<P: AsRef<Path>>(config: &Config, path: P, depth: usize) -> (Vec<File>, u64) {
 	let mut files = Vec::new();
 	let mut total_size = 0u64;
 
@@ -88,35 +105,57 @@ fn walk<P: AsRef<Path>>(path: P, depth: usize) -> (Vec<File>, u64) {
 		}
 	};
 
-	//println!("Reading dir {:?}", path.as_ref());
 	for entry in entries {
 		let entry = entry.unwrap();
-		let metadata = match entry.metadata() {
+		let file_type = match entry.file_type() {
+			Ok(file_type) => file_type,
+			Err(err) => {
+				println!("WARNING: Unable to read '{}'.  The following error was received: {}", entry.path().to_string_lossy(), err);
+				continue
+			},
+		};
+
+		let (metadata, symlink_path) = if file_type.is_symlink() {
+			if config.dereference_symlinks {
+				(fs::metadata(entry.path()), None)
+			} else {
+				let symlink_path = match fs::read_link(entry.path()) {
+					Ok(path) => path,
+					Err(err) => {
+						println!("WARNING: Unable to read '{}'.  The following error was received: {}", entry.path().to_string_lossy(), err);
+						continue
+					},
+				};
+				(entry.metadata(), Some(symlink_path.to_str().unwrap().to_string()))
+			}
+		} else {
+			(entry.metadata(), None)
+		};
+
+		let metadata = match metadata {
 			Ok(metadata) => metadata,
 			Err(err) => {
 				println!("WARNING: Unable to read '{}'.  The following error was received: {}", entry.path().to_string_lossy(), err);
 				continue
 			},
-		};  // Doesn't follow symlinks
-		//let file_type = entry.file_type().unwrap();  // Doesn't follow symlinks
+		};
 
-		//println!("Walking {:?}", entry.path());
-
-		// TODO: Handle symlinks
-		if !metadata.is_file() && ! metadata.is_dir() {
-			continue;
-		}
-
-		let (children, entry_size) = if metadata.is_dir() {
-			walk(entry.path(), depth + 1)
-		} else {
+		let (children, entry_size) = if let Some(_) = symlink_path {
+			(Vec::new(), 0)
+		} else if metadata.is_file() {
 			(Vec::new(), metadata.len())
+		} else if metadata.is_dir() {
+			walk(config, entry.path(), depth + 1)
+		} else {
+			println!("WARNING: Skipping '{}' because it is not a symlink, directory, or regular file.", entry.path().to_string_lossy());
+			continue;
 		};
 
 		total_size += entry_size;
 
 		let file = File {
 			path: entry.file_name().to_str().unwrap().to_string(),
+			symlink: symlink_path,
 			is_dir: metadata.is_dir(),
 			mode: metadata.mode(),
 			mtime: metadata.mtime(),
@@ -141,8 +180,12 @@ fn read_files<P: AsRef<Path>>(files: &mut Vec<File>, base_path: P, block_store: 
 
 	for file in &mut *files {
 		let path = base_path.as_ref().join(&file.path);
+		let is_symlink = match file.symlink {
+			Some(_) => true,
+			None => false,
+		};
 
-		if !file.is_dir {
+		if !file.is_dir && !is_symlink {
 			println!("Reading file: {:?}", path.to_str());
 			if !read_file(&path, file, block_store, backend, total_size, *progress, cache_conn) {
 				dead_files.push(path.clone());

@@ -116,17 +116,23 @@ fn extract_files(files: &Vec<File>, base_path: String, block_store: &BlockStore,
 		path.push(&file.path);
 		let path = path.to_str().unwrap().to_string();
 
-		if !file.is_dir {
-			println!("Writing file: {}", path.clone());
-			extract_file(path.clone(), file, block_store, cache_dir, download_cache, backend);
-		} else {
+		if let Some(ref symlink_path) = file.symlink {
+			use std::os::unix;
+			println!("Creating symlink: {} {}", symlink_path, &path);
+			unix::fs::symlink(symlink_path, &path).unwrap();
+		} else if file.is_dir {
 			println!("Creating directory: {}", path.clone());
 			fs::DirBuilder::new().mode(file.mode).create(path.clone()).unwrap();
+		} else {
+			println!("Writing file: {}", path.clone());
+			extract_file(path.clone(), file, block_store, cache_dir, download_cache, backend);
 		}
 
 		extract_files(&file.children, path.clone(), block_store, cache_dir, download_cache, backend);
 
-		set_file_time(Path::new(&path), file.mtime, file.mtime_nsec);
+		if let None = file.symlink {
+			set_file_time(Path::new(&path), file.mtime, file.mtime_nsec);
+		}
 	}
 }
 

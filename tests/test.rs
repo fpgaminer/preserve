@@ -10,6 +10,7 @@ use tempdir::TempDir;
 use rand::{Rng, ChaChaRng};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, MetadataExt};
 use std::cmp;
+use std::os::unix;
 
 
 #[test]
@@ -188,9 +189,11 @@ fn generate_test_case() -> TempDir {
 	generate_random_file(path.path().join("testfolder").join("foo.bin"), &mut rng, 0o400, len, base_time);
 	let len = rng.gen_range(1, 1*1024*1024);
 	generate_random_file(path.path().join("testfolder").join("preserve_me"), &mut rng, 0o400, len, base_time);
-
 	let time = rng.gen_range(base_time-256000, base_time+256000);
 	set_file_time(path.path().join("testfolder"), time, rng.gen_range(0, 1000000000));
+
+	unix::fs::symlink("testfolder", path.path().join("symfolder")).unwrap();
+	unix::fs::symlink("testfile.txt", path.path().join("symfile")).unwrap();
 
 	path
 }
@@ -264,24 +267,3 @@ fn set_file_time<P: AsRef<Path>>(path: P, mtime: i64, mtime_nsec: i64) {
 		}
 	}.unwrap();
 }
-
-/*fn dump_metadata<P: AsRef<Path>>(path: P) {
-	let metadata = path.as_ref().metadata().unwrap();
-	println!("{:?}", path.as_ref());
-   println!("dev: {:?}", metadata.dev());
-            println!("ino: {:?}", metadata.ino());
-            println!("mode: {:?}", metadata.mode());
-            println!("nlink: {:?}", metadata.nlink());
-            println!("uid: {:?}", metadata.uid());
-            println!("gid: {:?}", metadata.gid());
-            println!("rdev: {:?}", metadata.rdev());
-            println!("size: {:?}", metadata.size());
-            println!("atime: {:?}", metadata.atime());
-            println!("atime_nsec: {:?}", metadata.atime_nsec());
-            println!("mtime: {:?}", metadata.mtime());
-            println!("mtime_nsec: {:?}", metadata.mtime_nsec());
-            println!("ctime: {:?}", metadata.ctime());
-            println!("ctime_nsec: {:?}", metadata.ctime_nsec());
-            println!("blksize: {:?}", metadata.blksize());
-            println!("blocks: {:?}", metadata.blocks());
-}*/

@@ -6,6 +6,7 @@ use rustc_serialize::json;
 #[derive(RustcDecodable, RustcEncodable)]
 pub struct File {
 	pub path: String,
+	pub symlink: Option<String>,
 	pub is_dir: bool,
 	pub mode: u32,
 	pub mtime: i64,
@@ -22,6 +23,7 @@ pub struct File {
 pub struct Archive {
 	pub version: u32,
 	pub name: String,
+	pub original_path: String,
 	pub files: Vec<File>,
 }
 
