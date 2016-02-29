@@ -76,7 +76,7 @@ pub fn execute(args: &[String]) {
 		panic!("Unsupported archive version");
 	}
 
-	let download_cache_dir = TempDir::new("gbackup-").unwrap();
+	let download_cache_dir = TempDir::new("preserve-").unwrap();
 	let mut download_cache = HashMap::new();
 
 	build_block_refcounts(&archive.files, &keystore, &mut download_cache);
