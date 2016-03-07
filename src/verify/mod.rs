@@ -52,7 +52,7 @@ pub fn execute(args: &[String]) {
 
 	let mut block_list = HashSet::new();
 
-	build_block_list(&archive.files, &keystore, &mut block_list);
+	build_block_list(&archive.files, &mut block_list);
 	let mut block_list: Vec<&String> = block_list.iter().collect();
 	// TODO: Verify what RNG rust is going to use here.  We don't need crypto secure RNG, but do
 	// need something good.
@@ -64,13 +64,11 @@ pub fn execute(args: &[String]) {
 }
 
 
-fn build_block_list(files: &Vec<File>, keystore: &KeyStore, block_list: &mut HashSet<String>) {
+fn build_block_list(files: &Vec<File>, block_list: &mut HashSet<String>) {
 	for file in files {
 		for secret_str in &file.blocks {
 			block_list.insert(secret_str.clone());
 		}
-
-		build_block_list(&file.children, keystore, block_list);
 	}
 }
 

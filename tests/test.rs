@@ -112,7 +112,7 @@ impl TestConfig {
 	}
 
 	pub fn create<P: AsRef<Path>>(&self, backup_name: &str, path: P) {
-		Command::new(&self.bin)
+		let output = Command::new(&self.bin)
 			.current_dir(&self.working_dir)
 			.arg("create")
 			.arg("--keyfile").arg("keyfile")
@@ -121,12 +121,15 @@ impl TestConfig {
 			.arg(backup_name)
 			.arg(path.as_ref())
 			.output().unwrap();
+
+		println!("create-stdout: {}", String::from_utf8_lossy(&output.stdout));
+		println!("create-stderr: {}", String::from_utf8_lossy(&output.stderr));
 	}
 
 	pub fn restore(&self, backup_name: &str) -> TempDir {
 		let restore_dir = TempDir::new("preserve-test").unwrap();
 
-		Command::new(&self.bin)
+		let output = Command::new(&self.bin)
 			.current_dir(&self.working_dir)
 			.arg("restore")
 			.arg("--keyfile").arg("keyfile")
@@ -135,6 +138,9 @@ impl TestConfig {
 			.arg(backup_name)
 			.arg(restore_dir.path())
 			.output().unwrap();
+
+		println!("restore-stdout: {}", String::from_utf8_lossy(&output.stdout));
+		println!("restore-stderr: {}", String::from_utf8_lossy(&output.stderr));
 
 		restore_dir
 	}
@@ -189,11 +195,41 @@ fn generate_test_case() -> TempDir {
 	generate_random_file(path.path().join("testfolder").join("foo.bin"), &mut rng, 0o400, len, base_time);
 	let len = rng.gen_range(1, 1*1024*1024);
 	generate_random_file(path.path().join("testfolder").join("preserve_me"), &mut rng, 0o400, len, base_time);
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("testfolder"), time, rng.gen_range(0, 1000000000));
+
+	fs::DirBuilder::new().mode(rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder")).unwrap();
+	let len = rng.gen_range(1, 4*1024*1024);
+	generate_random_file(path.path().join("otherfolder").join("hello.world"), &mut rng, 0o400, len, base_time);
+	let len = rng.gen_range(1, 1*1024*1024);
+	generate_random_file(path.path().join("otherfolder").join("( ͡° ͜ʖ ͡°)"), &mut rng, 0o400, len, base_time);
+	fs::DirBuilder::new().mode(rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder").join("subfolder")).unwrap();
+	let len = rng.gen_range(1, 4*1024*1024);
+	generate_random_file(path.path().join("otherfolder").join("subfolder").join("box_of_kittens"), &mut rng, 0o400, len, base_time);
 
 	unix::fs::symlink("testfolder", path.path().join("symfolder")).unwrap();
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("symfolder"), time, rng.gen_range(0, 1000000000));
+
 	unix::fs::symlink("testfile.txt", path.path().join("symfile")).unwrap();
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("symfile"), time, rng.gen_range(0, 1000000000));
+
+	unix::fs::symlink("otherfolder/box_of_kittens", path.path().join("testfolder").join("badsym")).unwrap();
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("testfolder").join("badsym"), time, rng.gen_range(0, 1000000000));
+
+	unix::fs::symlink("../otherfolder/subfolder/box_of_kittens", path.path().join("testfolder").join("symfile")).unwrap();
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("testfolder").join("symfile"), time, rng.gen_range(0, 1000000000));
+
+	fs::hard_link(path.path().join("testfolder").join("foo.bin"), path.path().join("otherfolder").join("hardfile")).unwrap();
+
+	// Set time for directories
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("otherfolder").join("subfolder"), time, rng.gen_range(0, 1000000000));
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("otherfolder"), time, rng.gen_range(0, 1000000000));
+	let time = rng.gen_range(base_time-256000, base_time+256000);
+	set_file_time(path.path().join("testfolder"), time, rng.gen_range(0, 1000000000));
 
 	path
 }
@@ -203,7 +239,7 @@ fn generate_test_case() -> TempDir {
 fn compare_dirs<P: AsRef<Path>, Q: AsRef<Path>>(path1: P, path2: Q) -> Result<(), String> {
 	// rsync should compare mtime, permissions, contents, etc.
 	let output = Command::new("rsync")
-		.arg("-avnc")     // Archive mode, verbose, dry-run, checksum
+		.arg("-avnci")     // Archive mode, verbose, dry-run, checksum, itemized list
 		.arg("--delete")  // Check for missing files
 		.arg(path1.as_ref().to_str().unwrap().to_string() + "/")
 		.arg(path2.as_ref().to_str().unwrap().to_string() + "/")
@@ -216,7 +252,7 @@ fn compare_dirs<P: AsRef<Path>, Q: AsRef<Path>>(path1: P, path2: Q) -> Result<()
 
 	same &= output_lines.next().unwrap_or("x") == "sending incremental file list";
 	same &= match output_lines.next().unwrap_or("x") {
-		"./" => output_lines.next().unwrap_or("x") == "",
+		".d..t...... ./" => output_lines.next().unwrap_or("x") == "",
 		"" => true,
 		_ => false,
 	};
@@ -244,23 +280,21 @@ fn handle_failed_restore<P: AsRef<Path>, Q: AsRef<Path>>(original_dir: P, restor
 fn set_file_time<P: AsRef<Path>>(path: P, mtime: i64, mtime_nsec: i64) {
 	use std::ffi::CString;
 	use std::os::unix::prelude::*;
-	use libc::{timeval, time_t, suseconds_t, utimes};
+	use libc::{time_t, timespec, utimensat, c_long, AT_FDCWD, AT_SYMLINK_NOFOLLOW};
 	use std::io;
 
-	// TODO: Using utimensat would allow setting time with nanosecond accuracy (instead of microsecond accuracy).
-
-	let times = [timeval {
+	let times = [timespec {
 		tv_sec: mtime as time_t,
-		tv_usec: (mtime_nsec / 1000) as suseconds_t,
+		tv_nsec: mtime_nsec as c_long,
 	},
-	timeval {
+	timespec {
 		tv_sec: mtime as time_t,
-		tv_usec: (mtime_nsec / 1000) as suseconds_t,
+		tv_nsec: mtime_nsec as c_long,
 	}];
 	let p = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
 
 	unsafe {
-		if utimes(p.as_ptr() as *const _, times.as_ptr()) == 0 {
+		if utimensat(AT_FDCWD, p.as_ptr() as *const _, times.as_ptr(), AT_SYMLINK_NOFOLLOW) == 0 {
 			Ok(())
 		} else {
 			Err(io::Error::last_os_error())

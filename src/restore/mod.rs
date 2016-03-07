@@ -26,6 +26,7 @@ pub fn execute(args: &[String]) {
 	opts.optflag("", "debug-decrypt", "just fetch and decrypt the archive; no decompression, no parsing, no extraction");
 	opts.reqopt("", "backend", "set backend", "BACKEND");
 	opts.optopt("", "backend-path", "set backend path", "PATH");
+	opts.optflag("", "hard-dereference", "dereference hardlinks");
 
 	let matches = match opts.parse(args) {
 		Ok(m) => m,
@@ -61,6 +62,10 @@ pub fn execute(args: &[String]) {
 		}
 	};
 
+	let mut config = Config::default();
+
+	config.dereference_hardlinks = matches.opt_present("hard-dereference");
+
 	let encrypted_archive_name = keystore.encrypt_archive_name(&backup_name);
 	let encrypted_archive = backend.fetch_archive(&encrypted_archive_name);
 
@@ -81,15 +86,21 @@ pub fn execute(args: &[String]) {
 
 	build_block_refcounts(&archive.files, &keystore, &mut download_cache);
 
-	extract_files(&archive.files, target_directory.to_str().unwrap().to_string(), &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend);
+	extract_files(&config, &archive.files, target_directory.to_str().unwrap().to_string(), &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend, );
+}
+
+
+#[derive(Default)]
+struct Config {
+	/// If true, hardlinks will be removed by cloning the file at all places it is referenced.
+	/// If false, hardlinks are preserved.
+	pub dereference_hardlinks: bool,
 }
 
 
 fn build_block_refcounts(files: &Vec<File>, keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) {
 	for file in files {
 		build_block_refcounts_helper(file, keystore, download_cache);
-
-		build_block_refcounts(&file.children, keystore, download_cache);
 	}
 }
 
@@ -110,29 +121,63 @@ fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache
 }
 
 
-fn extract_files(files: &Vec<File>, base_path: String, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
+fn extract_files<P: AsRef<Path>>(config: &Config, files: &Vec<File>, base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
+	let mut hardlink_map: HashMap<u64, PathBuf> = HashMap::new();
+	// List of all directories and the mtimes they need set.
+	// We set these after extracting all files, since extracting the files changes the mtime of
+	// directories.
+	let mut directory_times = Vec::new();
+
 	for file in files {
-		let mut path = PathBuf::from(&base_path);
-		path.push(&file.path);
-		let path = path.to_str().unwrap().to_string();
+		let filepath = base_path.as_ref().join(&file.path);
 
 		if let Some(ref symlink_path) = file.symlink {
 			use std::os::unix;
-			println!("Creating symlink: {} {}", symlink_path, &path);
-			unix::fs::symlink(symlink_path, &path).unwrap();
+			println!("Creating symlink: {} {}", symlink_path, filepath.display());
+			unix::fs::symlink(symlink_path, &filepath).unwrap();
 		} else if file.is_dir {
-			println!("Creating directory: {}", path.clone());
-			fs::DirBuilder::new().mode(file.mode).create(path.clone()).unwrap();
+			println!("Creating directory: {}", filepath.display());
+			fs::DirBuilder::new().mode(file.mode).create(&filepath).unwrap();
+			directory_times.push((filepath.clone(), file.mtime, file.mtime_nsec));
 		} else {
-			println!("Writing file: {}", path.clone());
-			extract_file(path.clone(), file, block_store, cache_dir, download_cache, backend);
+			let hardlinked = if let Some(hardlink_id) = file.hardlink_id {
+				if config.dereference_hardlinks {
+					false
+				} else {
+					match hardlink_map.get(&hardlink_id) {
+						Some(existing_path) => {
+							println!("Hardlinking '{}' to '{}'", existing_path.display(), filepath.display());
+							fs::hard_link(existing_path, &filepath).unwrap();
+							true
+						},
+						None => false,
+					}
+				}
+			} else {
+				false
+			};
+
+			if !hardlinked {
+				println!("Writing file: {}", filepath.display());
+				extract_file(&filepath, file, block_store, cache_dir, download_cache, backend);
+
+				if !config.dereference_hardlinks {
+					if let Some(hardlink_id) = file.hardlink_id {
+						hardlink_map.insert(hardlink_id, filepath.clone());
+					}
+				}
+			}
 		}
 
-		extract_files(&file.children, path.clone(), block_store, cache_dir, download_cache, backend);
+		set_file_time(&filepath, file.mtime, file.mtime_nsec);
+	}
 
-		if let None = file.symlink {
-			set_file_time(Path::new(&path), file.mtime, file.mtime_nsec);
-		}
+	// Set mtime for directories.
+	// We go in reverse, so we hit child directories before their parents
+	directory_times.reverse();
+
+	for (ref dirpath, ref mtime, ref mtime_nsec) in directory_times {
+		set_file_time(dirpath, mtime.clone(), mtime_nsec.clone());
 	}
 }
 
@@ -202,23 +247,21 @@ fn cache_fetch(secret_str: &str, block_store: &BlockStore, cache_dir: &Path, dow
 fn set_file_time(path: &Path, mtime: i64, mtime_nsec: i64) {
 	use std::ffi::CString;
 	use std::os::unix::prelude::*;
-	use libc::{timeval, time_t, suseconds_t, utimes};
+	use libc::{time_t, timespec, utimensat, c_long, AT_FDCWD, AT_SYMLINK_NOFOLLOW};
 	use std::io;
 
-	// TODO: Using utimensat would allow setting time with nanosecond accuracy (instead of microsecond accuracy).
-
-	let times = [timeval {
+	let times = [timespec {
 		tv_sec: mtime as time_t,
-		tv_usec: (mtime_nsec / 1000) as suseconds_t,
+		tv_nsec: mtime_nsec as c_long,
 	},
-	timeval {
+	timespec {
 		tv_sec: mtime as time_t,
-		tv_usec: (mtime_nsec / 1000) as suseconds_t,
+		tv_nsec: mtime_nsec as c_long,
 	}];
 	let p = CString::new(path.as_os_str().as_bytes()).unwrap();
 
 	unsafe {
-		if utimes(p.as_ptr() as *const _, times.as_ptr()) == 0 {
+		if utimensat(AT_FDCWD, p.as_ptr() as *const _, times.as_ptr(), AT_SYMLINK_NOFOLLOW) == 0 {
 			Ok(())
 		} else {
 			Err(io::Error::last_os_error())

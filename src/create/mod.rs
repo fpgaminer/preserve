@@ -3,23 +3,15 @@ use getopts::Options;
 use std::fs;
 use std::io::{Read, BufReader};
 use block::BlockStore;
-use std::path::{Path};
+use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
 use rustc_serialize::hex::{ToHex, FromHex};
 use std::string::ToString;
 use backend::{AcdBackend, FileBackend, Backend};
 use archive::{Archive, File};
 use rusqlite;
-
-#[derive(Default)]
-struct Config {
-	/// If true, follow symlinks.
-	/// If false, symlinks are saved as symlinks in the archive.
-	pub dereference_symlinks: bool,
-	/// If true, follow hardlinks.
-	/// If false, hardlink are saved as hardlinks in the archive.
-	pub dereference_hardlinks: bool,
-}
+use std::collections::{HashSet, HashMap};
+use std::env;
 
 
 pub fn execute(args: &[String]) {
@@ -28,7 +20,6 @@ pub fn execute(args: &[String]) {
 	opts.reqopt("", "backend", "set backend", "BACKEND");
 	opts.optopt("", "backend-path", "set backend path", "PATH");
 	opts.optflag("", "dereference", "follow symlinks");
-	opts.optflag("", "hard-dereference", "follow hardlinks");
 
 	let matches = match opts.parse(args) {
 		Ok(m) => m,
@@ -45,7 +36,6 @@ pub fn execute(args: &[String]) {
 	let target_directory = Path::new(&matches.free[1].clone()).canonicalize().unwrap();
 
 	config.dereference_symlinks = matches.opt_present("dereference");
-	config.dereference_hardlinks = matches.opt_present("hard-dereference");
 
 	let mut reader = BufReader::new(match matches.opt_str("keyfile") {
 		Some(path) => fs::File::open(path).unwrap(),
@@ -62,29 +52,17 @@ pub fn execute(args: &[String]) {
 		}
 	};
 
-	let cache_conn = rusqlite::Connection::open("cache.sqlite").unwrap();
+	// Build archive
+	let archive = {
+		let mut builder = ArchiveBuilder::new(config, &target_directory, &mut *backend, &block_store);
+		println!("Gathering list of files...");
+		builder.walk();
+		println!("Reading files...");
+		builder.read_files();
+		builder.warn_about_missing_symlinks();
+		builder.warn_about_missing_hardlinks();
 
-	cache_conn.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
-		path TEXT NOT NULL,
-		mtime INTEGER NOT NULL,
-		mtime_nsec INTEGER NOT NULL,
-		size INTEGER NOT NULL,
-		blocks TEXT NOT NULL
-	)", &[]).unwrap();
-
-	cache_conn.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", &[]).unwrap();
-	cache_conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", &[]).unwrap();
-
-	let (mut files, total_backup_size) = walk(&config, target_directory.clone(), 0);
-	let mut progress = 0u64;
-
-	read_files(&mut files, &target_directory, &block_store, &mut *backend, total_backup_size, &mut progress, &cache_conn);
-
-	let archive = Archive {
-		version: 0x00000001,
-		name: backup_name,
-		original_path: target_directory.to_str().unwrap().to_string(),
-		files: files,
+		builder.create_archive(&backup_name)
 	};
 
 	println!("Writing archive...");
@@ -93,159 +71,433 @@ pub fn execute(args: &[String]) {
 	println!("Done");
 }
 
-fn walk<P: AsRef<Path>>(config: &Config, path: P, depth: usize) -> (Vec<File>, u64) {
-	let mut files = Vec::new();
-	let mut total_size = 0u64;
 
-	let entries = match fs::read_dir(path.as_ref()) {
-		Ok(x) => x,
-		Err(err) => {
-			println!("WARNING: Unable to read directory '{}'.  The following error was received: {}", path.as_ref().to_string_lossy(), err);
-			return (files, total_size)
+#[derive(Default)]
+struct Config {
+	/// If true, follow symlinks.
+	/// If false, symlinks are saved as symlinks in the archive.
+	pub dereference_symlinks: bool,
+	/// If true, we will skip all files/directories that reside on other filesystems.
+	/// This is on by default, and useful to ignore /dev and others like it when backing up /.
+	pub one_file_system: bool,
+}
+
+/// Used to uniquely identify a file during backup creation, so we can
+/// easily skip certain files (like our cache databases).
+#[derive(Eq, PartialEq, Hash)]
+struct FileIdentifier {
+	devid: u64,
+	inode: u64,
+}
+
+struct HardLink {
+	/// How many links exist to this inode, on the user's system.
+	expected_links: u64,
+	/// We assign a unique id to each hardlink during backup creation,
+	/// which, in the archive, is then assigned to each file involved in the hardlink.
+	/// We could use (devid, inode), but that seems wasteful and perhaps non-portable.
+	/// So we'll just assign our own id, unique within the archive, using a simple counter.
+	id: u64,
+	/// Used for error reporting; just one of the paths that points to this inode.
+	example_path: PathBuf,
+}
+
+// Wrap File so we can keep track of a few extra things while building the archive
+struct ArchiveBuilderFile {
+	file: File,
+	missing: bool,
+}
+
+struct ArchiveBuilder<'a> {
+	config: Config,
+	base_path: PathBuf,
+	hardlink_map: HashMap<FileIdentifier, HardLink>,
+	last_hardlink_id: u64,
+	total_size: u64,
+	ignore_list: HashSet<FileIdentifier>,
+	files: Vec<ArchiveBuilderFile>,
+	backend: &'a mut Backend,
+	block_store: &'a BlockStore<'a>,
+}
+
+impl<'a> ArchiveBuilder<'a> {
+	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, block_store: &'a BlockStore) -> ArchiveBuilder<'a> {
+		let base_path = if base_path.as_ref().is_relative() {
+			env::current_dir().unwrap().join(base_path)
+		} else {
+			PathBuf::from(base_path.as_ref())
+		};
+
+		ArchiveBuilder {
+			config: config,
+			base_path: base_path,
+			hardlink_map: HashMap::new(),
+			total_size: 0,
+			last_hardlink_id: 0,
+			ignore_list: HashSet::new(),
+			files: Vec::new(),
+			backend: backend,
+			block_store: block_store,
 		}
-	};
+	}
 
-	for entry in entries {
-		let entry = entry.unwrap();
-		let file_type = match entry.file_type() {
-			Ok(file_type) => file_type,
+	fn open_cache_db(&self) -> rusqlite::Connection {
+		let db = rusqlite::Connection::open("cache.sqlite").unwrap();
+
+		db.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
+			path TEXT NOT NULL,
+			mtime INTEGER NOT NULL,
+			mtime_nsec INTEGER NOT NULL,
+			size INTEGER NOT NULL,
+			blocks TEXT NOT NULL
+		)", &[]).unwrap();
+
+		db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", &[]).unwrap();
+		db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", &[]).unwrap();
+
+		db
+	}
+
+	// Walk the file tree from self.base_path, gathering metadata about all the files
+	fn walk(&mut self) {
+		self.files = Vec::new();
+		self.total_size = 0;
+
+		let base_path = self.base_path.clone();
+		let base_path_metadata = self.base_path.metadata().unwrap();
+		let current_filesystem = Some(base_path_metadata.dev());
+		let mut unscanned_paths: Vec<PathBuf> = Vec::new();
+
+		unscanned_paths.extend(self.list_file_children(&base_path));
+
+		while let Some(path) = unscanned_paths.pop() {
+			let file = match self.read_file_metadata(path, current_filesystem) {
+				Some(file) => file,
+				None => continue,
+			};
+
+			if file.file.symlink.is_none() && file.file.is_dir {
+				unscanned_paths.extend(self.list_file_children(base_path.join(&file.file.path)));
+			}
+
+			self.total_size += file.file.size;
+			self.files.push(file);
+		}
+	}
+
+	fn create_archive(&self, name: &str) -> Archive {
+		let mut files = Vec::new();
+
+		for file in &self.files {
+			files.push(file.file.clone());
+		}
+
+		Archive {
+			version: 0x00000001,
+			name: name.to_owned(),
+			original_path: self.base_path.canonicalize().unwrap().to_str().unwrap().to_string(),
+			files: files,
+		}
+	}
+
+	// Given a path, read the metadata for the file, handle symlinks, hardlinks, etc and return an ArchiveBuilderFile or None if a problem was encountered.
+	fn read_file_metadata<P: AsRef<Path>>(&mut self, path: P, current_filesystem: Option<u64>) -> Option<ArchiveBuilderFile> {
+		// First, let's see if it's a symlink
+		let symlink_metadata = match path.as_ref().symlink_metadata() {
+			Ok(metadata) => metadata,
 			Err(err) => {
-				println!("WARNING: Unable to read '{}'.  The following error was received: {}", entry.path().to_string_lossy(), err);
-				continue
+				println!("WARNING: Unable to read metadata for '{}'.  The following error was received: {}", path.as_ref().display(), err);
+				return None
 			},
 		};
 
-		let (metadata, symlink_path) = if file_type.is_symlink() {
-			if config.dereference_symlinks {
-				(fs::metadata(entry.path()), None)
-			} else {
-				let symlink_path = match fs::read_link(entry.path()) {
-					Ok(path) => path,
-					Err(err) => {
-						println!("WARNING: Unable to read '{}'.  The following error was received: {}", entry.path().to_string_lossy(), err);
-						continue
-					},
-				};
-				(entry.metadata(), Some(symlink_path.to_str().unwrap().to_string()))
+		// Skip files, symlinks, etc that don't reside on the current filesystem we're walking, if --one-file-system is enabled
+		if let Some(current_filesystem) = current_filesystem {
+			if symlink_metadata.dev() != current_filesystem {
+				println!("WARNING: '{}' is being skipped because of --one-file-system.", path.as_ref().display());
+				return None
 			}
+		}
+
+		// If we encounter a symlink, and we aren't dereferencing, then we will
+		// store information about the symlink, and all metadata will be about
+		// the symlink (not the file/folder it points to).
+		// If we derference the symlink then all metadata will be about the
+		// file/folder the symlink points to.
+		let (metadata, symlink_path) = if symlink_metadata.file_type().is_symlink() && !self.config.dereference_symlinks {
+			let symlink_path: String = match fs::read_link(path.as_ref()) {
+				Ok(symlink_path) => match symlink_path.to_str() {
+					Some(symlink_path_str) => symlink_path_str.to_string(),
+					None => {
+						println!("WARNING: Unable to read symlink for '{}' as UTF-8 string.", path.as_ref().display());
+						return None
+					},
+				},
+				Err(err) => {
+					println!("WARNING: Unable to read symlink for '{}'.  The following error was received: {}", path.as_ref().display(), err);
+					return None
+				},
+			};
+
+			(path.as_ref().symlink_metadata(), Some(symlink_path))
 		} else {
-			(entry.metadata(), None)
+			(path.as_ref().metadata(), None)
 		};
 
 		let metadata = match metadata {
 			Ok(metadata) => metadata,
 			Err(err) => {
-				println!("WARNING: Unable to read '{}'.  The following error was received: {}", entry.path().to_string_lossy(), err);
-				continue
+				println!("WARNING: Unable to read metadata for '{}'.  The following error was received: {}", path.as_ref().display(), err);
+				return None;
 			},
 		};
 
-		let (children, entry_size) = if let Some(_) = symlink_path {
-			(Vec::new(), 0)
-		} else if metadata.is_file() {
-			(Vec::new(), metadata.len())
-		} else if metadata.is_dir() {
-			walk(config, entry.path(), depth + 1)
-		} else {
-			println!("WARNING: Skipping '{}' because it is not a symlink, directory, or regular file.", entry.path().to_string_lossy());
-			continue;
-		};
-
-		total_size += entry_size;
-
-		let file = File {
-			path: entry.file_name().to_str().unwrap().to_string(),
-			symlink: symlink_path,
-			is_dir: metadata.is_dir(),
-			mode: metadata.mode(),
-			mtime: metadata.mtime(),
-			mtime_nsec: metadata.mtime_nsec(),
-			uid: metadata.uid(),
-			gid: metadata.gid(),
-			size: metadata.len(),
-			children: children,
-			blocks: Vec::new(),
-		};
-
-		files.push(file);
-	}
-
-	(files, total_size)
-}
-
-
-fn read_files<P: AsRef<Path>>(files: &mut Vec<File>, base_path: P, block_store: &BlockStore, backend: &mut Backend, total_size: u64, progress: &mut u64, cache_conn: &rusqlite::Connection) {
-	// TODO: This whole method of removing files that we had trouble reading is awkward
-	let mut dead_files = Vec::new();
-
-	for file in &mut *files {
-		let path = base_path.as_ref().join(&file.path);
-		let is_symlink = match file.symlink {
-			Some(_) => true,
-			None => false,
-		};
-
-		if !file.is_dir && !is_symlink {
-			println!("Reading file: {:?}", path.to_str());
-			if !read_file(&path, file, block_store, backend, total_size, *progress, cache_conn) {
-				dead_files.push(path.clone());
+		// Skip files, symlinks, etc that don't reside on the current filesystem we're walking, if --one-file-system is enabled
+		if let Some(current_filesystem) = current_filesystem {
+			if metadata.dev() != current_filesystem {
+				println!("WARNING: '{}' is being skipped because of --one-file-system.", path.as_ref().display());
+				return None
 			}
-			*progress += file.size;
-			println!("Progress: {}MB of {}MB", *progress / (1024*1024), total_size / (1024*1024));
 		}
 
-		read_files(&mut file.children, path, block_store, backend, total_size, progress, cache_conn);
+		if self.should_ignore(&metadata) {
+			return None;
+		}
+
+		// Skip anything that isn't a symlink, regular file, or directory.
+		if symlink_path.is_none() && !metadata.is_file() && !metadata.is_dir() {
+			println!("WARNING: Skipping '{}' because it is not a symlink, directory, or regular file.", path.as_ref().display());
+			return None;
+		}
+
+		let filesize = if symlink_path.is_none() && metadata.is_file() {
+			metadata.len()
+		} else {
+			0
+		};
+
+		// The path stored in the archive is relative to the archive's base_path
+		let filepath = match path.as_ref().strip_prefix(&self.base_path).unwrap().to_str() {
+			Some(filepath) => filepath.to_string(),
+			None => {
+				println!("WARNING: Unable to read path of '{}' as UTF-8 string.  It will be skipped.", path.as_ref().display());
+				return None
+			}
+		};
+
+		// Handle hardlinks
+		let hardlink_id = if metadata.nlink() > 1 && !metadata.is_dir() {
+			let key = FileIdentifier {
+				devid: metadata.dev(),
+				inode: metadata.ino(),
+			};
+
+			if self.hardlink_map.contains_key(&key) {
+				let entry = self.hardlink_map.get_mut(&key).unwrap();
+
+				Some(entry.id)
+			} else {
+				self.hardlink_map.insert(key, HardLink {
+					expected_links: metadata.nlink(),
+					id: self.last_hardlink_id,
+					example_path: PathBuf::from(path.as_ref()),
+				});
+				self.last_hardlink_id += 1;
+				Some(self.last_hardlink_id - 1)
+			}
+		} else {
+			None
+		};
+
+		Some(ArchiveBuilderFile {
+			file: File {
+				path: filepath,
+				is_dir: metadata.is_dir(),
+				symlink: symlink_path,
+				hardlink_id: hardlink_id,
+				mode: metadata.mode(),
+				mtime: metadata.mtime(),
+				mtime_nsec: metadata.mtime_nsec(),
+				uid: metadata.uid(),
+				gid: metadata.gid(),
+				size: filesize,
+				blocks: Vec::new(),
+			},
+			missing: false,
+		})
 	}
 
-	files.retain(|ref file| {
-		let path = base_path.as_ref().join(&file.path);
+	/// Assuming that path is a directory, this function returns a list of
+	/// all files inside that directory.
+	fn list_file_children<P: AsRef<Path>>(&mut self, path: P) -> Vec<PathBuf> {
+		let mut children = Vec::new();
 
-		!dead_files.contains(&path)
-	});
+		let entries = match path.as_ref().read_dir() {
+			Ok(entries) => entries,
+			Err(err) => {
+				println!("WARNING: Unable to read directory '{}'.  The following error was received: {}", path.as_ref().display(), err);
+				return Vec::new();
+			}
+		};
+
+		for entry in entries {
+			let entry = match entry {
+				Ok(x) => x,
+				Err(err) => {
+					println!("WARNING: Unable to read contents of directory '{}'.  The following error was received: {}", path.as_ref().display(), err);
+					return Vec::new();
+				}
+			};
+
+			children.push(entry.path());
+		}
+
+		children
+	}
+
+	/// Determine if the given path should be ignored, given the settings.
+	fn should_ignore(&self, metadata: &fs::Metadata) -> bool {
+		let identifier = FileIdentifier {
+			devid: metadata.dev(),
+			inode: metadata.ino(),
+		};
+
+		if self.ignore_list.contains(&identifier) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/// Logs warnings about any hardlinks for which we haven't backed up all the links.
+	fn warn_about_missing_hardlinks(&self) {
+		let mut links_found = HashMap::new();
+
+		for file in &self.files {
+			if let Some(hardlink_id) = file.file.hardlink_id {
+				*links_found.entry(hardlink_id).or_insert(0) += 1;
+			}
+		}
+
+		for hardlink in self.hardlink_map.values() {
+			match links_found.get(&hardlink.id) {
+				Some(links) => {
+					if links < &hardlink.expected_links {
+						println!("WARNING: A hardlink with {} links was included in this backup, but only {} of those links have been included.  One of the links: '{}'", hardlink.expected_links, links, hardlink.example_path.display());
+					}
+				},
+				None => {
+					println!("WARNING: A hardlink with {} links was supposed to be included in this backup, but none of those links have been included.  One of the links: '{}'", hardlink.expected_links, hardlink.example_path.display());
+				}
+			}
+		}
+	}
+
+	/// Logs warnings about any symlinks for which we haven't backed up the file/directory linked.
+	fn warn_about_missing_symlinks(&self) {
+		// Create a hashset of all archived paths, and a list of all symlinks.
+		let mut symlinks = Vec::new();
+		let mut paths_archived = HashSet::new();
+
+		for file in &self.files {
+			let filepath = self.base_path.join(&file.file.path);
+
+			if file.file.symlink.is_some() {
+				// Calling canonicalize on the symlink will get us the target file/folder
+				let target = match filepath.canonicalize() {
+					Ok(target) => target,
+					Err(err) => {
+						println!("WARNING: The symlink '{}' was included in the backup, but the file/folder it links to is missing.  The following error was received while trying to find it: {}", filepath.display(), err);
+						continue;
+					}
+				};
+
+				symlinks.push((file.file.path.clone(), target));
+			} else {
+				paths_archived.insert(filepath.canonicalize().unwrap());
+			}
+		}
+
+		// Now we can go through all symlinks and make sure the file/directory they link to exists.
+		for (path, symlink) in symlinks {
+			if paths_archived.contains(&symlink) {
+				continue;
+			}
+
+			println!("WARNING: The symlink '{}' was included in the backup, but the file/directory it links to, '{}', was not included.", path, symlink.display());
+		}
+	}
+
+	fn read_files(&mut self) {
+		let mut progress = 0;
+		let cache_db = self.open_cache_db();
+
+		for file in &mut self.files {
+			if file.file.is_dir || file.file.symlink.is_some() {
+				continue;
+			}
+
+			println!("Reading file: {}", file.file.path);
+			match read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size) {
+				Some(blocks) => file.file.blocks.extend(blocks),
+				None => file.missing = true,
+			};
+
+			progress += file.file.size;
+			println!("Progress: {}MB of {}MB", progress / (1024*1024), self.total_size / (1024*1024));
+		}
+
+		self.files.retain(|ref file| !file.missing);
+	}
 }
 
 
-fn read_file<P: AsRef<Path>>(path: P, f: &mut File, block_store: &BlockStore, backend: &mut Backend, total_size: u64, progress: u64, cache_conn: &rusqlite::Connection) -> bool {
-	let file = match fs::File::open(path.as_ref().clone()) {
+fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Option<Vec<String>> {
+	let path = base_path.as_ref().join(&file.file.path);
+	let canonical_path = path.canonicalize().unwrap();
+	let reader_file = match fs::File::open(&path) {
 		Ok(f) => f,
 		Err(err) => {
-			println!("WARNING: Unable to open file '{}' with the following error: {}.  It will not be included in the archive.", path.as_ref().to_string_lossy(), err);
-			return false
+			println!("WARNING: Unable to open file '{}'.  The following error was received: {}.  It will not be included in the archive.", path.display(), err);
+			return None
 		},
 	};
-	let reader = BufReader::new(&file);
+	let reader = BufReader::new(&reader_file);
 	let reader_ref = reader.get_ref();
 	let mut buffer = Vec::<u8>::new();
 	let mut total_read = 0;
-	let canonical = path.as_ref().canonicalize().unwrap();
 
-	let result = cache_conn.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical.to_str().unwrap().to_owned(), &f.mtime, &f.mtime_nsec, &(f.size as i64)], |row| {
+	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
 		row.get(0)
 	});
 
 	match result {
-		Ok(blocks) => {
+		Ok(blocks_str) => {
 			let mut need_reread = false;
-			let blocks: String = blocks;
-			if blocks.len() > 0 {
-				for block in blocks.split('\n') {
+			let blocks_str: String = blocks_str;
+			let mut blocks = Vec::new();
+
+			if blocks_str.len() > 0 {
+				for block in blocks_str.split('\n') {
 					let secret = Secret::from_slice(&block.from_hex().unwrap()).unwrap();
 					if !block_store.block_exists(&secret, backend) {
 						need_reread = true;
 						break;
 					}
-					f.blocks.push(block.to_owned());
+					blocks.push(block.to_owned());
 				}
 			}
 
 			if !need_reread {
 				println!("Found in mtime cache.");
-				return true;
+				return Some(blocks);
 			}
 		},
 		Err(rusqlite::Error::QueryReturnedNoRows) => (),
 		Err(err) => panic!("Sqlite error: {}", err),
 	};
+
+	let mut blocks = Vec::new();
 
 	loop {
 		buffer.clear();
@@ -258,21 +510,22 @@ fn read_file<P: AsRef<Path>>(path: P, f: &mut File, block_store: &BlockStore, ba
 		total_read += buffer.len();
 
 		let Secret(secret) = block_store.new_block_from_plaintext(&buffer, backend);
-		f.blocks.push(secret.to_hex());
+		// TODO: Should we implement ToString for Secret and use that instead?
+		blocks.push(secret.to_hex());
 
 		if (total_read % (64*1024*1024)) == 0 {
 			println!("Progress: {}MB of {}MB", (progress + total_read as u64) / (1024*1024), total_size / (1024*1024));
 		}
 	}
 
-	if total_read as u64 != f.size {
-		println!("Size mismatch: {} != {}", total_read, f.size);
+	if total_read as u64 != file.file.size {
+		println!("Size mismatch: {} != {}", total_read, file.file.size);
 	}
 
-	if total_read as u64 == f.size {
-		let blocks = f.blocks.join("\n");
-		cache_conn.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical.to_str().unwrap().to_owned(), &f.mtime, &f.mtime_nsec, &(f.size as i64), &blocks]).unwrap();
+	if total_read as u64 == file.file.size {
+		let blocks_str = blocks.join("\n");
+		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]).unwrap();
 	}
 
-	true
+	Some(blocks)
 }
