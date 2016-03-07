@@ -86,7 +86,7 @@ pub fn execute(args: &[String]) {
 
 	build_block_refcounts(&archive.files, &keystore, &mut download_cache);
 
-	extract_files(&config, &archive.files, target_directory.to_str().unwrap().to_string(), &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend, );
+	extract_files(&config, &archive.files, target_directory.to_str().unwrap(), &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend, );
 }
 
 
@@ -98,7 +98,7 @@ struct Config {
 }
 
 
-fn build_block_refcounts(files: &Vec<File>, keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) {
+fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) {
 	for file in files {
 		build_block_refcounts_helper(file, keystore, download_cache);
 	}
@@ -121,7 +121,7 @@ fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache
 }
 
 
-fn extract_files<P: AsRef<Path>>(config: &Config, files: &Vec<File>, base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
+fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
 	let mut hardlink_map: HashMap<u64, PathBuf> = HashMap::new();
 	// List of all directories and the mtimes they need set.
 	// We set these after extracting all files, since extracting the files changes the mtime of
@@ -177,14 +177,14 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &Vec<File>, base_path: 
 	directory_times.reverse();
 
 	for (ref dirpath, ref mtime, ref mtime_nsec) in directory_times {
-		set_file_time(dirpath, mtime.clone(), mtime_nsec.clone());
+		set_file_time(dirpath, *mtime, *mtime_nsec);
 	}
 }
 
 
 fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
 	// TODO: Don't overwrite files?
-	let mut file = fs::OpenOptions::new().write(true).create(true).mode(f.mode).open(path.as_ref().clone()).unwrap();
+	let mut file = fs::OpenOptions::new().write(true).create(true).mode(f.mode).open(path.as_ref()).unwrap();
 
 	/* TODO: This doesn't seem like a bulletproof way to do this */
 	/* Check if file exists */
@@ -240,7 +240,7 @@ fn cache_fetch(secret_str: &str, block_store: &BlockStore, cache_dir: &Path, dow
 		file.write_all(&plaintext).unwrap();
 	}
 
-	return plaintext;
+	plaintext
 }
 
 

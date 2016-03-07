@@ -93,7 +93,7 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
 					Some(n) => Ok(n),
 					None => Err(decoder.error(&format!("Expecting hex string of length {}", $len * 2)))
 				},
-				Err(_) => Err(decoder.error(&format!("Expecting hex string"))),
+				Err(_) => Err(decoder.error("Expecting hex string")),
 			}
             /*decoder.read_seq(|decoder, len| {
                 if len != $len {

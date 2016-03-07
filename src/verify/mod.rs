@@ -64,7 +64,7 @@ pub fn execute(args: &[String]) {
 }
 
 
-fn build_block_list(files: &Vec<File>, block_list: &mut HashSet<String>) {
+fn build_block_list(files: &[File], block_list: &mut HashSet<String>) {
 	for file in files {
 		for secret_str in &file.blocks {
 			block_list.insert(secret_str.clone());
@@ -92,7 +92,7 @@ fn verify_blocks(block_list: &[&String], keystore: &KeyStore, backend: &mut Back
 		}
 	}
 
-	if corrupted_blocks.len() > 0 {
+	if !corrupted_blocks.is_empty() {
 		println!("The following corrupted blocks were found:");
 		for block_id in corrupted_blocks {
 			println!("{}", block_id);

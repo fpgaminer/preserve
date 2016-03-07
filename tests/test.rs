@@ -222,6 +222,7 @@ fn generate_test_case() -> TempDir {
 	set_file_time(path.path().join("testfolder").join("symfile"), time, rng.gen_range(0, 1000000000));
 
 	fs::hard_link(path.path().join("testfolder").join("foo.bin"), path.path().join("otherfolder").join("hardfile")).unwrap();
+	fs::hard_link(path.path().join("otherfolder").join("hello.world"), path.path().join("testfolder").join("hardfile")).unwrap();
 
 	// Set time for directories
 	let time = rng.gen_range(base_time-256000, base_time+256000);

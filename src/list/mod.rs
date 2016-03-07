@@ -38,7 +38,7 @@ pub fn execute(args: &[String]) {
 		println!("{}", archive_name);
 	}
 
-	if encrypted_archive_names.len() == 0 {
+	if encrypted_archive_names.is_empty() {
 		println!("No archives found");
 	}
 }

@@ -130,7 +130,7 @@ impl KeyStore {
 	}
 
 	pub fn load<R: io::Read>(reader: &mut R) -> KeyStore {
-		let mut data = "".to_string();
+		let mut data = String::new();
 		reader.read_to_string(&mut data).unwrap();
 		json::decode(&data).unwrap()
 	}

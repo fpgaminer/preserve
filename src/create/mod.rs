@@ -292,19 +292,21 @@ impl<'a> ArchiveBuilder<'a> {
 				inode: metadata.ino(),
 			};
 
-			if self.hardlink_map.contains_key(&key) {
-				let entry = self.hardlink_map.get_mut(&key).unwrap();
+			let next_hardlink_id = self.last_hardlink_id;
 
-				Some(entry.id)
-			} else {
-				self.hardlink_map.insert(key, HardLink {
+			let entry = self.hardlink_map.entry(key).or_insert_with(|| {
+				HardLink {
 					expected_links: metadata.nlink(),
-					id: self.last_hardlink_id,
+					id: next_hardlink_id,
 					example_path: PathBuf::from(path.as_ref()),
-				});
+				}
+			});
+
+			if entry.id == self.last_hardlink_id {
 				self.last_hardlink_id += 1;
-				Some(self.last_hardlink_id - 1)
 			}
+
+			Some(entry.id)
 		} else {
 			None
 		};
@@ -366,7 +368,7 @@ impl<'a> ArchiveBuilder<'a> {
 			return true;
 		}
 
-		return false;
+		false
 	}
 
 	/// Logs warnings about any hardlinks for which we haven't backed up all the links.
@@ -477,7 +479,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 			let blocks_str: String = blocks_str;
 			let mut blocks = Vec::new();
 
-			if blocks_str.len() > 0 {
+			if !blocks_str.is_empty() {
 				for block in blocks_str.split('\n') {
 					let secret = Secret::from_slice(&block.from_hex().unwrap()).unwrap();
 					if !block_store.block_exists(&secret, backend) {
@@ -503,7 +505,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		buffer.clear();
 		reader_ref.take(1024*1024).read_to_end(&mut buffer).unwrap();
 
-		if buffer.len() == 0 {
+		if buffer.is_empty() {
 			break;
 		}
 
