@@ -28,7 +28,7 @@ fn integration_test_1() {
 	test_config.init();
 
 	// Test case
-	let original_dir = generate_test_case();
+	let original_dir = TestGenerator::new().generate_test_case();
 
 	// First test
 	{
@@ -73,7 +73,7 @@ fn integration_test_1() {
 	}
 
 	// Check old backup
-	let original_dir = generate_test_case();
+	let original_dir = TestGenerator::new().generate_test_case();
 
 	{
 		let restore_dir = test_config.restore("test1");
@@ -147,92 +147,132 @@ impl TestConfig {
 }
 
 
-// Generate a file at the given path with random binary data of the given length.
-// The file's permissions will be random, but OR'd with mode_or so you can force certain permissions.
-// The file mtime will be a random variation on base_time.
-fn generate_random_file<P: AsRef<Path>>(path: P, rng: &mut Box<Rng>, mode_or: u32, len: usize, base_time: i64) {
-	let mode = (rng.next_u32() & 511) | mode_or;
-	let time = base_time + rng.gen_range(-256000, 256000);
-	let time_nsec = rng.gen_range(0, 1000000000);
-	{
-		let file = fs::OpenOptions::new().write(true).create(true).mode(mode).open(path.as_ref()).unwrap();
-		let mut writer = BufWriter::new(file);
-		let mut written = 0;
-		let mut buffer = [0u8; 4096];
+struct TestGenerator {
+	rng: Box<Rng>,
+}
 
-		while written < len {
-			let chunk_size = cmp::min(buffer.len(), len - written);
 
-			rng.fill_bytes(&mut buffer);
-			writer.write_all(&buffer[..chunk_size]).unwrap();
-			written += chunk_size;
+impl TestGenerator {
+	fn new() -> TestGenerator {
+		TestGenerator {
+			// Deterministic seed
+			rng: Box::new(ChaChaRng::new_unseeded()),
 		}
 	}
 
-	set_file_time(path, time, time_nsec);
-}
+	// Generate a file at the given path with random binary data of the given length.
+	// The file's permissions will be random, but OR'd with mode_or so you can force certain permissions.
+	// The file mtime will be a random variation on base_time.
+	fn generate_random_file<P: AsRef<Path>>(&mut self, path: P, len: usize) {
+		let mode = (self.rng.next_u32() & 511) | 0o400;
+		{
+			let file = fs::OpenOptions::new().write(true).create(true).mode(mode).open(path.as_ref()).unwrap();
+			let mut writer = BufWriter::new(file);
+			let mut written = 0;
+			let mut buffer = [0u8; 4096];
 
-// Fill destination folder with our test case, which we will backup, restore, modify, etc for the various tests.
-fn generate_test_case() -> TempDir {
-	let path = TempDir::new("preserve-test").unwrap();
-	let base_time = 1456713592;
+			while written < len {
+				let chunk_size = cmp::min(buffer.len(), len - written);
 
-	// Deterministic seed
-	let mut rng: Box<Rng> = Box::new(ChaChaRng::new_unseeded());
+				self.rng.fill_bytes(&mut buffer);
+				writer.write_all(&buffer[..chunk_size]).unwrap();
+				written += chunk_size;
+			}
+		}
 
-	let len = rng.gen_range(1, 4*1024*1024);
-	generate_random_file(path.path().join("foo.bin"), &mut rng, 0o400, len, base_time);
-	let len = rng.gen_range(1, 4*1024*1024);
-	generate_random_file(path.path().join("foo2.bin"), &mut rng, 0o400, len, base_time);
-	let len = rng.gen_range(1, 1*1024*1024);
-	generate_random_file(path.path().join("testfile.txt"), &mut rng, 0o400, len, base_time);
-	let len = rng.gen_range(1, 1*1024*1024);
-	generate_random_file(path.path().join("testfile2.txt"), &mut rng, 0o400, len, base_time);
-	generate_random_file(path.path().join("EMPTY"), &mut rng, 0o400, 0, base_time);
+		self.set_random_filetime(path);
+	}
 
-	fs::DirBuilder::new().mode(rng.gen_range(0, 512) | 0o700).create(path.path().join("testfolder")).unwrap();
-	let len = rng.gen_range(1, 4*1024*1024);
-	generate_random_file(path.path().join("testfolder").join("foo.bin"), &mut rng, 0o400, len, base_time);
-	let len = rng.gen_range(1, 1*1024*1024);
-	generate_random_file(path.path().join("testfolder").join("preserve_me"), &mut rng, 0o400, len, base_time);
+	// Fill destination folder with our test case, which we will backup, restore, modify, etc for the various tests.
+	fn generate_test_case(&mut self) -> TempDir {
+		let path = TempDir::new("preserve-test").unwrap();
 
-	fs::DirBuilder::new().mode(rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder")).unwrap();
-	let len = rng.gen_range(1, 4*1024*1024);
-	generate_random_file(path.path().join("otherfolder").join("hello.world"), &mut rng, 0o400, len, base_time);
-	let len = rng.gen_range(1, 1*1024*1024);
-	generate_random_file(path.path().join("otherfolder").join("( ͡° ͜ʖ ͡°)"), &mut rng, 0o400, len, base_time);
-	fs::DirBuilder::new().mode(rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder").join("subfolder")).unwrap();
-	let len = rng.gen_range(1, 4*1024*1024);
-	generate_random_file(path.path().join("otherfolder").join("subfolder").join("box_of_kittens"), &mut rng, 0o400, len, base_time);
+		let len = self.rng.gen_range(1, 4*1024*1024);
+		self.generate_random_file(path.path().join("foo.bin"), len);
+		let len = self.rng.gen_range(1, 4*1024*1024);
+		self.generate_random_file(path.path().join("foo2.bin"), len);
+		let len = self.rng.gen_range(1, 1*1024*1024);
+		self.generate_random_file(path.path().join("testfile.txt"), len);
+		let len = self.rng.gen_range(1, 1*1024*1024);
+		self.generate_random_file(path.path().join("testfile2.txt"), len);
+		self.generate_random_file(path.path().join("EMPTY"), 0);
 
-	unix::fs::symlink("testfolder", path.path().join("symfolder")).unwrap();
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("symfolder"), time, rng.gen_range(0, 1000000000));
+		fs::DirBuilder::new().mode(self.rng.gen_range(0, 512) | 0o700).create(path.path().join("testfolder")).unwrap();
+		let len = self.rng.gen_range(1, 4*1024*1024);
+		self.generate_random_file(path.path().join("testfolder").join("foo.bin"), len);
+		let len = self.rng.gen_range(1, 1*1024*1024);
+		self.generate_random_file(path.path().join("testfolder").join("preserve_me"), len);
 
-	unix::fs::symlink("testfile.txt", path.path().join("symfile")).unwrap();
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("symfile"), time, rng.gen_range(0, 1000000000));
+		fs::DirBuilder::new().mode(self.rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder")).unwrap();
+		let len = self.rng.gen_range(1, 4*1024*1024);
+		self.generate_random_file(path.path().join("otherfolder").join("hello.world"), len);
+		let len = self.rng.gen_range(1, 1*1024*1024);
+		self.generate_random_file(path.path().join("otherfolder").join("( ͡° ͜ʖ ͡°)"), len);
+		fs::DirBuilder::new().mode(self.rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder").join("subfolder")).unwrap();
+		let len = self.rng.gen_range(1, 4*1024*1024);
+		self.generate_random_file(path.path().join("otherfolder").join("subfolder").join("box_of_kittens"), len);
 
-	unix::fs::symlink("otherfolder/box_of_kittens", path.path().join("testfolder").join("badsym")).unwrap();
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("testfolder").join("badsym"), time, rng.gen_range(0, 1000000000));
+		unix::fs::symlink("testfolder", path.path().join("symfolder")).unwrap();
+		self.set_random_filetime(path.path().join("symfolder"));
 
-	unix::fs::symlink("../otherfolder/subfolder/box_of_kittens", path.path().join("testfolder").join("symfile")).unwrap();
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("testfolder").join("symfile"), time, rng.gen_range(0, 1000000000));
+		unix::fs::symlink("testfile.txt", path.path().join("symfile")).unwrap();
+		self.set_random_filetime(path.path().join("symfile"));
 
-	fs::hard_link(path.path().join("testfolder").join("foo.bin"), path.path().join("otherfolder").join("hardfile")).unwrap();
-	fs::hard_link(path.path().join("otherfolder").join("hello.world"), path.path().join("testfolder").join("hardfile")).unwrap();
+		unix::fs::symlink("otherfolder/box_of_kittens", path.path().join("testfolder").join("badsym")).unwrap();
+		self.set_random_filetime(path.path().join("testfolder").join("badsym"));
 
-	// Set time for directories
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("otherfolder").join("subfolder"), time, rng.gen_range(0, 1000000000));
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("otherfolder"), time, rng.gen_range(0, 1000000000));
-	let time = rng.gen_range(base_time-256000, base_time+256000);
-	set_file_time(path.path().join("testfolder"), time, rng.gen_range(0, 1000000000));
+		unix::fs::symlink("../otherfolder/subfolder/box_of_kittens", path.path().join("testfolder").join("symfile")).unwrap();
+		self.set_random_filetime(path.path().join("testfolder").join("symfile"));
 
-	path
+		fs::hard_link(path.path().join("testfolder").join("foo.bin"), path.path().join("otherfolder").join("hardfile")).unwrap();
+		fs::hard_link(path.path().join("otherfolder").join("hello.world"), path.path().join("testfolder").join("hardfile")).unwrap();
+
+		// Set time for directories
+		self.set_random_filetime(path.path().join("otherfolder").join("subfolder"));
+		self.set_random_filetime(path.path().join("otherfolder"));
+		self.set_random_filetime(path.path().join("testfolder"));
+
+		path
+	}
+
+	fn generate_random_filetime(&mut self) -> (i64, i64) {
+		let base_time = 1456713592;
+
+		(self.rng.gen_range(base_time-256000, base_time+256000), self.rng.gen_range(0, 1000000000))
+	}
+
+	fn set_random_filetime<P: AsRef<Path>>(&mut self, path: P) {
+		let (time, time_nsec) = self.generate_random_filetime();
+
+		TestGenerator::set_file_time(path, time, time_nsec);
+	}
+
+	// Does not follow symlinks, so if used on a symlink it will set the mtime
+	// for the link itself, rather than the file the link points to.
+	fn set_file_time<P: AsRef<Path>>(path: P, mtime: i64, mtime_nsec: i64) {
+		use std::ffi::CString;
+		use std::os::unix::prelude::*;
+		use libc::{time_t, timespec, utimensat, c_long, AT_FDCWD, AT_SYMLINK_NOFOLLOW};
+		use std::io;
+
+		let times = [timespec {
+			tv_sec: mtime as time_t,
+			tv_nsec: mtime_nsec as c_long,
+		},
+		timespec {
+			tv_sec: mtime as time_t,
+			tv_nsec: mtime_nsec as c_long,
+		}];
+		let p = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
+
+		unsafe {
+			if utimensat(AT_FDCWD, p.as_ptr() as *const _, times.as_ptr(), AT_SYMLINK_NOFOLLOW) == 0 {
+				Ok(())
+			} else {
+				Err(io::Error::last_os_error())
+			}
+		}.unwrap();
+	}
 }
 
 // Compares the given directories using rsync.
@@ -276,29 +316,4 @@ fn handle_failed_restore<P: AsRef<Path>, Q: AsRef<Path>>(original_dir: P, restor
 	fs::rename(original_dir, "/tmp/preserve-test-failed-original-".to_string() + &random_str).unwrap();
 	fs::rename(restore_dir, "/tmp/preserve-test-failed-restore-".to_string() + &random_str).unwrap();
 	panic!("{}\nOriginal and Restore directories have been saved for inspection: /tmp/preserve-test-failed-*-{}\nrsync output:\n{}", reason, random_str, err)
-}
-
-fn set_file_time<P: AsRef<Path>>(path: P, mtime: i64, mtime_nsec: i64) {
-	use std::ffi::CString;
-	use std::os::unix::prelude::*;
-	use libc::{time_t, timespec, utimensat, c_long, AT_FDCWD, AT_SYMLINK_NOFOLLOW};
-	use std::io;
-
-	let times = [timespec {
-		tv_sec: mtime as time_t,
-		tv_nsec: mtime_nsec as c_long,
-	},
-	timespec {
-		tv_sec: mtime as time_t,
-		tv_nsec: mtime_nsec as c_long,
-	}];
-	let p = CString::new(path.as_ref().as_os_str().as_bytes()).unwrap();
-
-	unsafe {
-		if utimensat(AT_FDCWD, p.as_ptr() as *const _, times.as_ptr(), AT_SYMLINK_NOFOLLOW) == 0 {
-			Ok(())
-		} else {
-			Err(io::Error::last_os_error())
-		}
-	}.unwrap();
 }
