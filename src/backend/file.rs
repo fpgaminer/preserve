@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::io::{BufReader, Read, Write};
 use std::fs::{self, OpenOptions};
 use rand::{Rng, OsRng};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::str::FromStr;
 
 
@@ -35,6 +35,9 @@ impl FileBackend {
 			// TODO: Should we use BufWriter here?  Profile
 			file.write_all(data).unwrap();
 		}
+
+		// Archives and Blocks should be stored as world readonly
+		fs::set_permissions(&temppath, PermissionsExt::from_mode(0o444)).unwrap();
 
 		assert_eq!(temppath.metadata().unwrap().dev(), destination.as_ref().parent().unwrap().metadata().unwrap().dev());
 
