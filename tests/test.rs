@@ -94,6 +94,20 @@ fn integration_test_1() {
 }
 
 
+// Dump our testcase to a folder so we can inspect it
+#[test]
+#[ignore]
+fn dump_test_case() {
+	// Test case
+	let original_dir = TestGenerator::new().generate_test_case();
+
+	// Save the test case
+	let random_str: String = rand::thread_rng().gen_ascii_chars().take(10).collect();
+	let path = Path::new("/tmp").join("preserve-testcase-".to_string() + &random_str);
+	fs::rename(original_dir.path(), path).unwrap();
+}
+
+
 // Information about the current test, such as the temporary directories where we're storing
 // the keyfile, backend path, etc.
 struct TestConfig {
@@ -160,11 +174,123 @@ impl TestGenerator {
 		}
 	}
 
-	// Generate a file at the given path with random binary data of the given length.
-	// The file's permissions will be random, but OR'd with mode_or so you can force certain permissions.
-	// The file mtime will be a random variation on base_time.
-	fn generate_random_file<P: AsRef<Path>>(&mut self, path: P, len: usize) {
-		let mode = (self.rng.next_u32() & 511) | 0o400;
+	// Create a temporary folder, fill it with our testcase, and return it.
+	// The testcase is generated randomly; random file tree with random names, contents, lengths, permissions, etc.
+	// There is, however, some minimum requirements.  There will always be at least one empty file, some symlinks, and some hardlinks.
+	// Generation is deterministic.
+	// The generation is performed by filling a folder with a random number of files, folders, symlinks, and hardlinks.
+	// Each generated folder is then recursively filled the same way.
+	// TODO: Add requiment for bad symlinks
+	fn generate_test_case(&mut self) -> TempDir {
+		let basepath = TempDir::new("preserve-test").unwrap();
+		let mut number_of_symlinks = 0;
+		let mut number_of_hardlinks = 0;
+		let mut number_of_empty_files = 0;
+		let mut all_files = Vec::new();
+		let mut all_folders = Vec::new();
+		let mut tasks = Vec::new();
+
+		tasks.push(basepath.path().to_path_buf());
+
+		while let Some(parent) = tasks.pop() {
+			// Prevent generating too deep
+			let num_nodes_to_generate = if parent.strip_prefix(basepath.path()).unwrap().components().count() >= 3 {
+				0
+			} else {
+				self.rng.gen_range(0, 18)
+			};
+
+			for _ in 0..num_nodes_to_generate {
+				let filename = self.generate_random_name();
+				let path = parent.join(filename);
+
+				match self.rng.next_f32() {
+					// File
+					0.0...0.5 => {
+						self.generate_random_file(&path);
+
+						if path.metadata().unwrap().len() == 0 {
+							number_of_empty_files += 1;
+						}
+
+						all_files.push(path);
+					},
+					// Folder
+					0.5...0.8 => {
+						self.generate_random_folder(&path);
+						all_folders.push(path.clone());
+						tasks.push(path.clone());
+					},
+					// Symlink
+					0.8...0.9 => {
+						self.generate_random_symlink(&path, &all_files, &all_folders);
+						number_of_symlinks += 1;
+					},
+					// Hardlink
+					_ => {
+						if self.generate_random_hardlink(&path, &all_files) {
+							number_of_hardlinks += 1;
+						}
+					},
+				};
+			}
+
+			// If our minimum requirements for the test case have not been met, then try again.
+			if tasks.is_empty() && (number_of_symlinks < 3 || number_of_hardlinks < 3 || number_of_empty_files < 1 || all_folders.is_empty()) {
+				tasks.push(basepath.path().to_path_buf());
+			}
+		}
+
+		// Set random times for all the folders
+		// We do this after, because generating the contents of the folders will undo what we set.
+		// We do this in reverse, so that we set the children times before the parent folder.
+		all_folders.reverse();
+
+		for folder in all_folders {
+			self.set_random_filetime(folder);
+		}
+
+		basepath
+	}
+
+	// Generate a random file name
+	// Random length.  Randomly includes unicode.
+	fn generate_random_name(&mut self) -> String {
+		let alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
+		let alphabet: Vec<char> = alphabet.chars().collect();
+		let mut name = String::new();
+		let mut name_tmp = String::new();
+		let len = self.rng.gen_range(1, 256);
+
+		loop {
+			// 12% chance of being random alphanumeric unicode char, otherwise use alphabet above
+			let c: char = if self.rng.next_u32() < 0x2000_0000 {
+				self.rng.gen_iter::<char>().filter(|c| c.is_alphanumeric()).take(1).next().unwrap()
+			} else {
+				*self.rng.choose(&alphabet).unwrap()
+			};
+
+			name_tmp.push(c);
+
+			if name_tmp.len() > len {
+				return name;
+			}
+
+			name.push(c);
+		}
+	}
+
+	// Generate a random file at the given path.
+	// Length, contents, permissions, etc. will be random.
+	fn generate_random_file<P: AsRef<Path>>(&mut self, path: P) {
+		let mode = (self.rng.next_u32() & 511) | 0o600;
+		let len = match self.rng.next_f32() {
+			0.0...0.1 => 0, // Empty (10%)
+			0.1...0.6 => self.rng.gen_range(1, 1024), // Small
+			0.6...0.9 => self.rng.gen_range(1, 2*1024*1024), // Medium
+			_ => self.rng.gen_range(1, 32*1024*1024), // Large
+		};
+
 		{
 			let file = fs::OpenOptions::new().write(true).create(true).mode(mode).open(path.as_ref()).unwrap();
 			let mut writer = BufWriter::new(file);
@@ -183,56 +309,68 @@ impl TestGenerator {
 		self.set_random_filetime(path);
 	}
 
-	// Fill destination folder with our test case, which we will backup, restore, modify, etc for the various tests.
-	fn generate_test_case(&mut self) -> TempDir {
-		let path = TempDir::new("preserve-test").unwrap();
+	fn generate_random_folder<P: AsRef<Path>>(&mut self, path: P) {
+		let mode = (self.rng.next_u32() & 511) | 0o700;
+		fs::DirBuilder::new().mode(mode).create(path).unwrap();
+	}
 
-		let len = self.rng.gen_range(1, 4*1024*1024);
-		self.generate_random_file(path.path().join("foo.bin"), len);
-		let len = self.rng.gen_range(1, 4*1024*1024);
-		self.generate_random_file(path.path().join("foo2.bin"), len);
-		let len = self.rng.gen_range(1, 1*1024*1024);
-		self.generate_random_file(path.path().join("testfile.txt"), len);
-		let len = self.rng.gen_range(1, 1*1024*1024);
-		self.generate_random_file(path.path().join("testfile2.txt"), len);
-		self.generate_random_file(path.path().join("EMPTY"), 0);
+	// Generate a symlink at the given path, linking randomly to one of the potential_folders or potential_files.
+	// The link's path to the target will be relative.
+	// If no targets are possible, or randomly, a bad symlink will be generated
+	fn generate_random_symlink<P: AsRef<Path>>(&mut self, path: P, potential_files: &[PathBuf], potential_folders: &[PathBuf]) {
+		let target = if self.rng.gen() {
+			if self.rng.gen() {
+				None // Bad symlink
+			} else {
+				self.rng.choose(potential_files)
+			}
+		} else {
+			self.rng.choose(potential_folders)
+		};
 
-		fs::DirBuilder::new().mode(self.rng.gen_range(0, 512) | 0o700).create(path.path().join("testfolder")).unwrap();
-		let len = self.rng.gen_range(1, 4*1024*1024);
-		self.generate_random_file(path.path().join("testfolder").join("foo.bin"), len);
-		let len = self.rng.gen_range(1, 1*1024*1024);
-		self.generate_random_file(path.path().join("testfolder").join("preserve_me"), len);
+		let target = match target {
+			Some(target) => TestGenerator::calculate_relative_path(path.as_ref().parent().unwrap(), target),
+			None => PathBuf::from(self.generate_random_name()),  // Bad symlink
+		};
 
-		fs::DirBuilder::new().mode(self.rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder")).unwrap();
-		let len = self.rng.gen_range(1, 4*1024*1024);
-		self.generate_random_file(path.path().join("otherfolder").join("hello.world"), len);
-		let len = self.rng.gen_range(1, 1*1024*1024);
-		self.generate_random_file(path.path().join("otherfolder").join("( ͡° ͜ʖ ͡°)"), len);
-		fs::DirBuilder::new().mode(self.rng.gen_range(0, 512) | 0o700).create(path.path().join("otherfolder").join("subfolder")).unwrap();
-		let len = self.rng.gen_range(1, 4*1024*1024);
-		self.generate_random_file(path.path().join("otherfolder").join("subfolder").join("box_of_kittens"), len);
+		unix::fs::symlink(target, path.as_ref()).unwrap();
+		self.set_random_filetime(path.as_ref());
+	}
 
-		unix::fs::symlink("testfolder", path.path().join("symfolder")).unwrap();
-		self.set_random_filetime(path.path().join("symfolder"));
+	// Returns a path relative to from (must be a directory) which gets to to (either directory or file)
+	fn calculate_relative_path<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> PathBuf {
+		let mut result = String::new();
+		let mut current = from.as_ref().to_path_buf();
 
-		unix::fs::symlink("testfile.txt", path.path().join("symfile")).unwrap();
-		self.set_random_filetime(path.path().join("symfile"));
+		loop {
+			match to.as_ref().strip_prefix(&current) {
+				Ok(remaining) => {
+					let final_result = PathBuf::from(result).join(remaining);
 
-		unix::fs::symlink("otherfolder/box_of_kittens", path.path().join("testfolder").join("badsym")).unwrap();
-		self.set_random_filetime(path.path().join("testfolder").join("badsym"));
+					return if final_result.to_string_lossy() == "" {
+						PathBuf::from("./")
+					} else {
+						final_result
+					};
+				},
+				Err(_) => (),
+			}
 
-		unix::fs::symlink("../otherfolder/subfolder/box_of_kittens", path.path().join("testfolder").join("symfile")).unwrap();
-		self.set_random_filetime(path.path().join("testfolder").join("symfile"));
+			result.push_str("../");
+			current.pop();
+		}
+	}
 
-		fs::hard_link(path.path().join("testfolder").join("foo.bin"), path.path().join("otherfolder").join("hardfile")).unwrap();
-		fs::hard_link(path.path().join("otherfolder").join("hello.world"), path.path().join("testfolder").join("hardfile")).unwrap();
-
-		// Set time for directories
-		self.set_random_filetime(path.path().join("otherfolder").join("subfolder"));
-		self.set_random_filetime(path.path().join("otherfolder"));
-		self.set_random_filetime(path.path().join("testfolder"));
-
-		path
+	// Generate a hardlink at the given path, linking randomly to one of the potential_files.
+	// Returns false when potential_files is empty
+	fn generate_random_hardlink<P: AsRef<Path>>(&mut self, path: P, potential_files: &[PathBuf]) -> bool {
+		match self.rng.choose(potential_files) {
+			Some(target) => {
+				fs::hard_link(target, path).unwrap();
+				true
+			},
+			None => false,
+		}
 	}
 
 	fn generate_random_filetime(&mut self) -> (i64, i64) {
