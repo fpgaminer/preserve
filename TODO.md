@@ -5,9 +5,6 @@ Major:
  * Test archiving and extracting an entire linux system (maybe live CD?).  This should test all sorts of bizarre filesystem properties.
 
 Minor:
- * Grab the inodes of our cache files, and then skip those during backup.
- * Add a config option, --dereference, which will handle symlinks by "dereferencing" them.  A symlink will become a regular file in the archive with the contents set to the the contents of the target.  This can be applied either during archive creation, or during extraction (implemented for create, but not restore).
- * Add repeated data to the test case, to exercise block deduplication
  * While reading file, watch for changes.
  * List all archive names (implemented for File, but not ACD backend)
  * Clean up TODOs, panics, and unwraps.
@@ -15,6 +12,8 @@ Minor:
  * Cleanup rust-acd
  * Test individual components of backup system
  * Tests for entire backup program
+ * Grab the inodes of our cache files, and then skip those during backup.
+ * Add a config option, --dereference, which will handle symlinks by "dereferencing" them.  A symlink will become a regular file in the archive with the contents set to the the contents of the target.  This can be applied either during archive creation, or during extraction (implemented for create, but not restore).
  * Usage text
  * Audit crypto
  * Have a service that actively tests the backups.  Download blocks and archives and check their HMAC.  Download an archive, decrypt, and try a block or two.  Do this every so often; often enough that everything is probabilistically checked at a reasonable frequency.
@@ -26,3 +25,4 @@ Minor:
  * Clean old entries out of mtime_cache
  * Restore file owner/group
  * At the top level of archive, store a table mapping uids/gids to names.  Then, during extraction, do a remap.  For every entry in the table, check the local system for the given user name or group name.  Use that to remap the archive's uid/gid to the local system's uid/gid.
+ * Add the ability for keygen to deterministically generate a keystore from a password.  Use heavy password hashing (maybe time it to a minute or so?) by default.

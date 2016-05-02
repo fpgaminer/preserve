@@ -14,11 +14,7 @@ mod keystore;
 mod archive;
 mod backend;
 mod block;
-mod keygen;
-mod create;
-mod restore;
-mod verify;
-mod list;
+mod cmds;
 
 use std::env;
 
@@ -48,19 +44,19 @@ fn main() {
 
 	match args[1].as_ref() {
 		"keygen" => {
-			keygen::execute(&args[2..]);
+			cmds::keygen::execute(&args[2..]);
 		},
 		"create" => {
-			create::execute(&args[2..]);
+			cmds::create::execute(&args[2..]);
 		},
 		"restore" => {
-			restore::execute(&args[2..]);
+			cmds::restore::execute(&args[2..]);
 		},
 		"verify" => {
-			verify::execute(&args[2..]);
+			cmds::verify::execute(&args[2..]);
 		},
 		"list" => {
-			list::execute(&args[2..]);
+			cmds::list::execute(&args[2..]);
 		},
 		_ => {
 			println!("{}", USAGE);
