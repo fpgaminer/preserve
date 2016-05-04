@@ -457,24 +457,15 @@ impl<'a> ArchiveBuilder<'a> {
 fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Option<Vec<String>> {
 	let path = base_path.as_ref().join(&file.file.path);
 	let canonical_path = path.canonicalize().unwrap();
-	let reader_file = match fs::File::open(&path) {
-		Ok(f) => f,
-		Err(err) => {
-			println!("WARNING: Unable to open file '{}'.  The following error was received: {}.  It will not be included in the archive.", path.display(), err);
-			return None
-		},
-	};
-	let reader = BufReader::new(&reader_file);
-	let reader_ref = reader.get_ref();
-	let mut buffer = Vec::<u8>::new();
-	let mut total_read = 0;
 
+	// Check to see if we have this file in the cache
 	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
 		row.get(0)
 	});
 
 	match result {
 		Ok(blocks_str) => {
+			// The file is cached, but are all the blocks available in the current block store?
 			let mut need_reread = false;
 			let blocks_str: String = blocks_str;
 			let mut blocks = Vec::new();
@@ -499,11 +490,89 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		Err(err) => panic!("Sqlite error: {}", err),
 	};
 
+	// Not cached or missing blocks, so let's actually read the file
+	let mut retries = 0;
+	loop {
+		// Update metadata, in case it changed.
+		match path.metadata() {
+			Ok(metadata) => {
+				file.file.mtime = metadata.mtime();
+				file.file.mtime_nsec = metadata.mtime_nsec();
+				file.file.size = metadata.size();
+				file.file.mode = metadata.mode();
+				file.file.uid = metadata.uid();
+				file.file.gid = metadata.gid();
+			},
+			Err(err) => {
+				println!("ERROR: The following error was received while checking the metadata for '{}': '{}'.", path.display(), err);
+				return None;
+			}
+		};
+
+		// Read file contents
+		let (blocks, should_retry) = read_file_inner(&path, block_store, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size);
+
+		let blocks = match blocks {
+			Some(blocks) => blocks,
+			None => {
+				// Reading failed.  Should we retry?
+				if !should_retry {
+					return None
+				}
+
+				// Reading failed due to the file changing.  Let's retry.
+				if retries == 2 {
+					println!("File '{}' keeps changing.  It will not be included in the archive.", path.display());
+					return None
+				}
+
+				println!("File changed, restarting from beginning.");
+				retries += 1;
+				continue;
+			},
+		};
+
+		let blocks_str = blocks.join("\n");
+		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]).unwrap();
+
+		return Some(blocks);
+	}
+}
+
+
+// Used by read_file.  read_file checks the cache, etc.  This will actually read the file into blocks.
+// If any file modifications are detected while reading, this function will return (None, true) to indicate the caller that it should retry (if it wishes).
+fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> (Option<Vec<String>>, bool) {
+	let reader_file = match fs::File::open(&path) {
+		Ok(f) => f,
+		Err(err) => {
+			println!("WARNING: Unable to open file '{}'.  The following error was received: {}.  It will not be included in the archive.", path.as_ref().display(), err);
+			return (None, false)
+		},
+	};
+	let reader = BufReader::new(&reader_file);
+	let reader_ref = reader.get_ref();
+	let mut buffer = Vec::<u8>::new();
+	let mut total_read = 0;
 	let mut blocks = Vec::new();
 
 	loop {
 		buffer.clear();
 		reader_ref.take(1024*1024).read_to_end(&mut buffer).unwrap();
+
+		// Check for file modification
+		match path.as_ref().metadata() {
+			Ok(metadata) => {
+				if metadata.mtime() != expected_mtime || metadata.mtime_nsec() != expected_mtime_nsec {
+					// The file has been modified.  Restart.
+					return (None, true);
+				}
+			},
+			Err(err) => {
+				println!("ERROR: The following error was received while checking the metadata for '{}': '{}'.", path.as_ref().display(), err);
+				return (None, false);
+			}
+		};
 
 		if buffer.is_empty() {
 			break;
@@ -520,14 +589,10 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		}
 	}
 
-	if total_read as u64 != file.file.size {
-		println!("Size mismatch: {} != {}", total_read, file.file.size);
+	if total_read as u64 != expected_size {
+		// File was modified
+		return (None, true);
 	}
 
-	if total_read as u64 == file.file.size {
-		let blocks_str = blocks.join("\n");
-		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]).unwrap();
-	}
-
-	Some(blocks)
+	(Some(blocks), false)
 }

@@ -5,7 +5,6 @@ Major:
  * Test archiving and extracting an entire linux system (maybe live CD?).  This should test all sorts of bizarre filesystem properties.
 
 Minor:
- * While reading file, watch for changes.
  * List all archive names (implemented for File, but not ACD backend)
  * Clean up TODOs, panics, and unwraps.
  * Proper logging
@@ -17,7 +16,7 @@ Minor:
  * Usage text
  * Audit crypto
  * Have a service that actively tests the backups.  Download blocks and archives and check their HMAC.  Download an archive, decrypt, and try a block or two.  Do this every so often; often enough that everything is probabilistically checked at a reasonable frequency.
- * Backup to multiple backends
+ * Option to backup to multiple backends
  * Clean up crypto-spec.md
  * Config file
  * Diehard randomness testing
@@ -26,3 +25,5 @@ Minor:
  * Restore file owner/group
  * At the top level of archive, store a table mapping uids/gids to names.  Then, during extraction, do a remap.  For every entry in the table, check the local system for the given user name or group name.  Use that to remap the archive's uid/gid to the local system's uid/gid.
  * Add the ability for keygen to deterministically generate a keystore from a password.  Use heavy password hashing (maybe time it to a minute or so?) by default.
+ * Add --one-file-system flag
+ * During archive creation, after reading all files, sleep for a second and then rescan the metadata on all files.  If there are any mismatches, reread those files.  This should catch any file modification that the existing file modification detection scheme misses (due to lag in mtime updates).
