@@ -456,7 +456,13 @@ impl<'a> ArchiveBuilder<'a> {
 
 fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Option<Vec<String>> {
 	let path = base_path.as_ref().join(&file.file.path);
-	let canonical_path = path.canonicalize().unwrap();
+	let canonical_path = match path.canonicalize() {
+		Ok(canonical_path) => canonical_path,
+		Err(err) => {
+			println!("ERROR: Unable to canonicalize the path '{}'.  It will not be included in the archive.  The following error was received: '{}'.", path.display(), err);
+			return None;
+		}
+	};
 
 	// Check to see if we have this file in the cache
 	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
