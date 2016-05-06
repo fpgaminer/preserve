@@ -27,3 +27,4 @@ Minor:
  * Add the ability for keygen to deterministically generate a keystore from a password.  Use heavy password hashing (maybe time it to a minute or so?) by default.
  * Add --one-file-system flag
  * During archive creation, after reading all files, sleep for a second and then rescan the metadata on all files.  If there are any mismatches, reread those files.  This should catch any file modification that the existing file modification detection scheme misses (due to lag in mtime updates).
+ * ACD backend: specify path
