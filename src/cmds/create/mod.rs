@@ -106,6 +106,7 @@ struct HardLink {
 struct ArchiveBuilderFile {
 	file: File,
 	missing: bool,
+	canonical_path: Option<PathBuf>,
 }
 
 struct ArchiveBuilder<'a> {
@@ -276,6 +277,11 @@ impl<'a> ArchiveBuilder<'a> {
 			0
 		};
 
+		let canonical_path = match path.as_ref().canonicalize() {
+			Ok(canonical_path) => Some(canonical_path),
+			Err(_) => None,
+		};
+
 		// The path stored in the archive is relative to the archive's base_path
 		let filepath = match path.as_ref().strip_prefix(&self.base_path).unwrap().to_str() {
 			Some(filepath) => filepath.to_string(),
@@ -326,6 +332,7 @@ impl<'a> ArchiveBuilder<'a> {
 				blocks: Vec::new(),
 			},
 			missing: false,
+			canonical_path: canonical_path,
 		})
 	}
 
@@ -402,21 +409,18 @@ impl<'a> ArchiveBuilder<'a> {
 		let mut paths_archived = HashSet::new();
 
 		for file in &self.files {
-			let filepath = self.base_path.join(&file.file.path);
-
 			if file.file.symlink.is_some() {
 				// Calling canonicalize on the symlink will get us the target file/folder
-				let target = match filepath.canonicalize() {
-					Ok(target) => target,
-					Err(err) => {
-						println!("WARNING: The symlink '{}' was included in the backup, but the file/folder it links to is missing.  The following error was received while trying to find it: {}", filepath.display(), err);
+				let target = match file.canonical_path.clone() {
+					Some(target) => target,
+					None => {
+						println!("WARNING: The symlink '{}' was included in the backup, but the file/directory it links to doesn't exist.", file.file.path);
 						continue;
 					}
 				};
-
 				symlinks.push((file.file.path.clone(), target));
 			} else {
-				paths_archived.insert(filepath.canonicalize().unwrap());
+				paths_archived.insert(file.canonical_path.clone().unwrap());
 			}
 		}
 
@@ -456,10 +460,10 @@ impl<'a> ArchiveBuilder<'a> {
 
 fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Option<Vec<String>> {
 	let path = base_path.as_ref().join(&file.file.path);
-	let canonical_path = match path.canonicalize() {
-		Ok(canonical_path) => canonical_path,
-		Err(err) => {
-			println!("ERROR: Unable to canonicalize the path '{}'.  It will not be included in the archive.  The following error was received: '{}'.", path.display(), err);
+	let canonical_path = match file.canonical_path.clone() {
+		Some(canonical_path) => canonical_path,
+		None => {
+			println!("WARNING: Unable to canonicalize path for '{}'.  It will not be included in the archive.", path.display());
 			return None;
 		}
 	};
