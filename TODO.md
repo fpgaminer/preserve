@@ -28,3 +28,4 @@ Minor:
  * Add --one-file-system flag
  * During archive creation, after reading all files, sleep for a second and then rescan the metadata on all files.  If there are any mismatches, reread those files.  This should catch any file modification that the existing file modification detection scheme misses (due to lag in mtime updates).
  * ACD backend: specify path
+ * When warning that a symlink was backed up but its link was not, we should also print the link.

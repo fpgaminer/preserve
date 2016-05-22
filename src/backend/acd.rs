@@ -1,16 +1,32 @@
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use backend::Backend;
-use acd::{self, AmazonCloudDrive};
+use acd;
 use std::path::Path;
+use std::fs::File;
+use std::io::Read;
+use rustc_serialize::json;
 
 
 pub struct AcdBackend {
-	acd: AmazonCloudDrive,
+	acd: acd::Client,
 }
 
 impl AcdBackend {
 	pub fn new() -> AcdBackend {
-		let acd = AmazonCloudDrive::new().unwrap();
+		#[derive(RustcDecodable)]
+		struct SecurityProfile {
+			client_id: String,
+			client_secret: String,
+		}
+
+		let security_profile: SecurityProfile = {
+			let mut f = File::open(".config/acd.security_profile.json").unwrap();
+			let mut s = String::new();
+			f.read_to_string(&mut s).unwrap();
+			json::decode(&s).unwrap()
+		};
+
+		let acd = acd::Client::new(&security_profile.client_id, &security_profile.client_secret, ".config").unwrap();
 
 		AcdBackend {
 			acd: acd,
@@ -45,7 +61,7 @@ impl Backend for AcdBackend {
 
 		match self.acd.upload(Some(&acd_id), &block_id, data, None) {
 			Ok(_) => (),
-			Err(acd::error::Error::NodeExists) => (),
+			Err(acd::Error::NodeExists) => (),
 			Err(err) => panic!("Error while uploading: {:?}", err),
 		}
 	}
