@@ -5,7 +5,6 @@ Major:
  * Test archiving and extracting an entire linux system (maybe live CD?).  This should test all sorts of bizarre filesystem properties.
 
 Minor:
- * List all archive names (implemented for File, but not ACD backend)
  * Clean up TODOs, panics, and unwraps.
  * Proper logging
  * Cleanup rust-acd

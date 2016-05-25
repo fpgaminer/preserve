@@ -32,6 +32,7 @@ pub fn execute(args: &[String]) {
 
 	let encrypted_archive_names = backend.list_archives();
 
+	// TODO: Push into a vec, sort alphabetically, and then print
 	for encrypted_archive_name in &encrypted_archive_names {
 		let archive_name = keystore.decrypt_archive_name(encrypted_archive_name);
 

@@ -5,6 +5,7 @@ use std::path::Path;
 use std::fs::File;
 use std::io::Read;
 use rustc_serialize::json;
+use std::str::FromStr;
 
 
 pub struct AcdBackend {
@@ -91,7 +92,18 @@ impl Backend for AcdBackend {
 	}
 
 	fn list_archives(&mut self) -> Vec<EncryptedArchiveName> {
-		// TODO
-		panic!("Not implemented");
+		let archives_id = match self.acd.find_path(None, Path::new("/gbackup/archives")).unwrap() {
+			Some(archives_id) => archives_id,
+			None => return Vec::new(),
+		};
+		let mut archives = Vec::new();
+		let acd_archive_files = self.acd.ls(&archives_id).unwrap();
+
+		for acd_file in acd_archive_files {
+			let encrypted_archive_name = EncryptedArchiveName::from_str(&acd_file.0).unwrap();
+			archives.push (encrypted_archive_name);
+		}
+
+		archives
 	}
 }
