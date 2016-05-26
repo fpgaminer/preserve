@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, BufReader, BufWriter, Write, SeekFrom, Seek, Read};
 use block::BlockStore;
 use std::path::{Path, PathBuf};
-use std::os::unix::fs::{MetadataExt, DirBuilderExt, OpenOptionsExt};
+use std::os::unix::fs::{MetadataExt, DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::collections::HashMap;
 use rustc_serialize::hex::FromHex;
 use backend::{FileBackend, AcdBackend, Backend};
@@ -137,7 +137,10 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			unix::fs::symlink(symlink_path, &filepath).unwrap();
 		} else if file.is_dir {
 			println!("Creating directory: {}", filepath.display());
-			fs::DirBuilder::new().mode(file.mode).create(&filepath).unwrap();
+			// Create and then set permissions.  This is done in two steps because
+			// mkdir is affected by the current process's umask, whereas chmod (set_permissions) is not.
+			fs::create_dir(&filepath).unwrap();
+			fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)).unwrap();
 			directory_times.push((filepath.clone(), file.mtime, file.mtime_nsec));
 		} else {
 			let hardlinked = if let Some(hardlink_id) = file.hardlink_id {
@@ -159,7 +162,9 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 
 			if !hardlinked {
 				println!("Writing file: {}", filepath.display());
+				// We set permissions after creating the file because `open` uses umask.
 				extract_file(&filepath, file, block_store, cache_dir, download_cache, backend);
+				fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)).unwrap();
 
 				if !config.dereference_hardlinks {
 					if let Some(hardlink_id) = file.hardlink_id {
@@ -184,7 +189,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 
 fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
 	// TODO: Don't overwrite files?
-	let mut file = fs::OpenOptions::new().write(true).create(true).mode(f.mode).open(path.as_ref()).unwrap();
+	let mut file = fs::OpenOptions::new().write(true).create(true).open(path.as_ref()).unwrap();
 
 	/* TODO: This doesn't seem like a bulletproof way to do this */
 	/* Check if file exists */
