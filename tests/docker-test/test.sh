@@ -18,7 +18,7 @@ docker build -t preserve-test-backup -f src/Dockerfile.backup src > logs/docker.
 docker build -t preserve-test-restore -f src/Dockerfile.restore src > logs/docker.build.restore.txt
 
 # Backup
-echo "Running backing container..."
+echo "Running backup container..."
 docker run -v $BACKUP_DIR:/backup --name preserve-test-backup preserve-test-backup > logs/docker.run.backup.txt
 docker export preserve-test-backup > exported-backup-image.tar
 docker rm preserve-test-backup
