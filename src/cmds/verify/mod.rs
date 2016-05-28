@@ -88,16 +88,16 @@ fn verify_blocks(block_list: &[&String], keystore: &KeyStore, backend: &mut Back
 		}
 
 		if idx % 32 == 0 {
-			println!("{:.2}% ({}/{})", 100.0 * (idx + 1) as f64 / block_list.len() as f64, idx + 1, block_list.len());
+			info!("{:.2}% ({}/{})", 100.0 * (idx + 1) as f64 / block_list.len() as f64, idx + 1, block_list.len());
 		}
 	}
 
 	if !corrupted_blocks.is_empty() {
-		println!("The following corrupted blocks were found:");
+		error!("The following corrupted blocks were found:");
 		for block_id in corrupted_blocks {
-			println!("{}", block_id);
+			error!("{}", block_id);
 		}
 	} else {
-		println!("No corrupted blocks were found");
+		info!("No corrupted blocks were found");
 	}
 }

@@ -55,9 +55,9 @@ pub fn execute(args: &[String]) {
 	// Build archive
 	let archive = {
 		let mut builder = ArchiveBuilder::new(config, &target_directory, &mut *backend, &block_store);
-		println!("Gathering list of files...");
+		info!("Gathering list of files...");
 		builder.walk();
-		println!("Reading files...");
+		info!("Reading files...");
 		builder.read_files();
 		builder.warn_about_missing_symlinks();
 		builder.warn_about_missing_hardlinks();
@@ -65,10 +65,10 @@ pub fn execute(args: &[String]) {
 		builder.create_archive(&backup_name)
 	};
 
-	println!("Writing archive...");
+	info!("Writing archive...");
 	let (encrypted_archive_name, encrypted_archive) = archive.encrypt(&keystore);
 	backend.store_archive(&encrypted_archive_name, &encrypted_archive);
-	println!("Done");
+	info!("Done");
 }
 
 
@@ -207,7 +207,7 @@ impl<'a> ArchiveBuilder<'a> {
 		let symlink_metadata = match path.as_ref().symlink_metadata() {
 			Ok(metadata) => metadata,
 			Err(err) => {
-				println!("WARNING: Unable to read metadata for '{}'.  The following error was received: {}", path.as_ref().display(), err);
+				warn!("Unable to read metadata for '{}'.  It will not be included in the archive.  The following error was received: {}", path.as_ref().display(), err);
 				return None
 			},
 		};
@@ -215,7 +215,7 @@ impl<'a> ArchiveBuilder<'a> {
 		// Skip files, symlinks, etc that don't reside on the current filesystem we're walking, if --one-file-system is enabled
 		if let Some(current_filesystem) = current_filesystem {
 			if symlink_metadata.dev() != current_filesystem {
-				println!("WARNING: '{}' is being skipped because of --one-file-system.", path.as_ref().display());
+				warn!("'{}' is being skipped because of --one-file-system.", path.as_ref().display());
 				return None
 			}
 		}
@@ -230,12 +230,12 @@ impl<'a> ArchiveBuilder<'a> {
 				Ok(symlink_path) => match symlink_path.to_str() {
 					Some(symlink_path_str) => symlink_path_str.to_string(),
 					None => {
-						println!("WARNING: Unable to read symlink for '{}' as UTF-8 string.", path.as_ref().display());
+						warn!("Unable to read symlink for '{}' as UTF-8 string.  It will not be included in the archive.", path.as_ref().display());
 						return None
 					},
 				},
 				Err(err) => {
-					println!("WARNING: Unable to read symlink for '{}'.  The following error was received: {}", path.as_ref().display(), err);
+					warn!("Unable to read symlink for '{}'.  It will not be included in the archive.  The following error was received: {}", path.as_ref().display(), err);
 					return None
 				},
 			};
@@ -248,7 +248,7 @@ impl<'a> ArchiveBuilder<'a> {
 		let metadata = match metadata {
 			Ok(metadata) => metadata,
 			Err(err) => {
-				println!("WARNING: Unable to read metadata for '{}'.  The following error was received: {}", path.as_ref().display(), err);
+				warn!("Unable to read metadata for '{}'.  It will not be included in the archive.  The following error was received: {}", path.as_ref().display(), err);
 				return None;
 			},
 		};
@@ -256,7 +256,7 @@ impl<'a> ArchiveBuilder<'a> {
 		// Skip files, symlinks, etc that don't reside on the current filesystem we're walking, if --one-file-system is enabled
 		if let Some(current_filesystem) = current_filesystem {
 			if metadata.dev() != current_filesystem {
-				println!("WARNING: '{}' is being skipped because of --one-file-system.", path.as_ref().display());
+				warn!("'{}' is being skipped because of --one-file-system.", path.as_ref().display());
 				return None
 			}
 		}
@@ -267,7 +267,7 @@ impl<'a> ArchiveBuilder<'a> {
 
 		// Skip anything that isn't a symlink, regular file, or directory.
 		if symlink_path.is_none() && !metadata.is_file() && !metadata.is_dir() {
-			println!("WARNING: Skipping '{}' because it is not a symlink, directory, or regular file.", path.as_ref().display());
+			warn!("Skipping '{}' because it is not a symlink, directory, or regular file.", path.as_ref().display());
 			return None;
 		}
 
@@ -286,7 +286,7 @@ impl<'a> ArchiveBuilder<'a> {
 		let filepath = match path.as_ref().strip_prefix(&self.base_path).unwrap().to_str() {
 			Some(filepath) => filepath.to_string(),
 			None => {
-				println!("WARNING: Unable to read path of '{}' as UTF-8 string.  It will be skipped.", path.as_ref().display());
+				warn!("Unable to read path of '{}' as UTF-8 string.  It will not be included in the archive.", path.as_ref().display());
 				return None
 			}
 		};
@@ -344,7 +344,7 @@ impl<'a> ArchiveBuilder<'a> {
 		let entries = match path.as_ref().read_dir() {
 			Ok(entries) => entries,
 			Err(err) => {
-				println!("WARNING: Unable to read directory '{}'.  The following error was received: {}", path.as_ref().display(), err);
+				warn!("Unable to read directory '{}'.  The following error was received: {}", path.as_ref().display(), err);
 				return Vec::new();
 			}
 		};
@@ -353,7 +353,7 @@ impl<'a> ArchiveBuilder<'a> {
 			let entry = match entry {
 				Ok(x) => x,
 				Err(err) => {
-					println!("WARNING: Unable to read contents of directory '{}'.  The following error was received: {}", path.as_ref().display(), err);
+					warn!("Unable to read contents of directory '{}'.  The following error was received: {}", path.as_ref().display(), err);
 					return Vec::new();
 				}
 			};
@@ -392,11 +392,11 @@ impl<'a> ArchiveBuilder<'a> {
 			match links_found.get(&hardlink.id) {
 				Some(links) => {
 					if links < &hardlink.expected_links {
-						println!("WARNING: A hardlink with {} links was included in this backup, but only {} of those links have been included.  One of the links: '{}'", hardlink.expected_links, links, hardlink.example_path.display());
+						warn!("A hardlink with {} links was included in this backup, but only {} of those links have been included.  One of the links: '{}'", hardlink.expected_links, links, hardlink.example_path.display());
 					}
 				},
 				None => {
-					println!("WARNING: A hardlink with {} links was supposed to be included in this backup, but none of those links have been included.  One of the links: '{}'", hardlink.expected_links, hardlink.example_path.display());
+					warn!("A hardlink with {} links was supposed to be included in this backup, but none of those links have been included.  One of the links: '{}'", hardlink.expected_links, hardlink.example_path.display());
 				}
 			}
 		}
@@ -414,7 +414,7 @@ impl<'a> ArchiveBuilder<'a> {
 				let target = match file.canonical_path.clone() {
 					Some(target) => target,
 					None => {
-						println!("WARNING: The symlink '{}' was included in the backup, but the file/directory it links to doesn't exist.", file.file.path);
+						warn!("The symlink '{}' was included in the backup, but the file/directory it links to doesn't exist.", file.file.path);
 						continue;
 					}
 				};
@@ -430,7 +430,7 @@ impl<'a> ArchiveBuilder<'a> {
 				continue;
 			}
 
-			println!("WARNING: The symlink '{}' was included in the backup, but the file/directory it links to, '{}', was not included.", path, symlink.display());
+			warn!("The symlink '{}' was included in the backup, but the file/directory it links to, '{}', was not included.", path, symlink.display());
 		}
 	}
 
@@ -443,14 +443,14 @@ impl<'a> ArchiveBuilder<'a> {
 				continue;
 			}
 
-			println!("Reading file: {}", file.file.path);
+			info!("Reading file: {}", file.file.path);
 			match read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size) {
 				Some(blocks) => file.file.blocks.extend(blocks),
 				None => file.missing = true,
 			};
 
 			progress += file.file.size;
-			println!("Progress: {}MB of {}MB", progress / (1024*1024), self.total_size / (1024*1024));
+			info!("Progress: {}MB of {}MB", progress / (1024*1024), self.total_size / (1024*1024));
 		}
 
 		self.files.retain(|ref file| !file.missing);
@@ -463,7 +463,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 	let canonical_path = match file.canonical_path.clone() {
 		Some(canonical_path) => canonical_path,
 		None => {
-			println!("WARNING: Unable to canonicalize path for '{}'.  It will not be included in the archive.", path.display());
+			warn!("Unable to canonicalize path for '{}'.  It will not be included in the archive.", path.display());
 			return None;
 		}
 	};
@@ -492,7 +492,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 			}
 
 			if !need_reread {
-				println!("Found in mtime cache.");
+				debug!("Found in mtime cache.");
 				return Some(blocks);
 			}
 		},
@@ -514,7 +514,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 				file.file.gid = metadata.gid();
 			},
 			Err(err) => {
-				println!("ERROR: The following error was received while checking the metadata for '{}': '{}'.", path.display(), err);
+				warn!("An error was received while checking the metadata for '{}'.  It will not be included in the archive.  Error message: '{}'.", path.display(), err);
 				return None;
 			}
 		};
@@ -532,11 +532,11 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 
 				// Reading failed due to the file changing.  Let's retry.
 				if retries == 2 {
-					println!("File '{}' keeps changing.  It will not be included in the archive.", path.display());
+					warn!("File '{}' keeps changing.  It will not be included in the archive.", path.display());
 					return None
 				}
 
-				println!("File changed, restarting from beginning.");
+				warn!("File changed, restarting from beginning.");
 				retries += 1;
 				continue;
 			},
@@ -556,7 +556,7 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 	let reader_file = match fs::File::open(&path) {
 		Ok(f) => f,
 		Err(err) => {
-			println!("WARNING: Unable to open file '{}'.  The following error was received: {}.  It will not be included in the archive.", path.as_ref().display(), err);
+			warn!("Unable to open file '{}'.  The following error was received: {}.  It will not be included in the archive.", path.as_ref().display(), err);
 			return (None, false)
 		},
 	};
@@ -579,7 +579,7 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 				}
 			},
 			Err(err) => {
-				println!("ERROR: The following error was received while checking the metadata for '{}': '{}'.", path.as_ref().display(), err);
+				warn!("An error was received while checking the metadata for '{}'.  It will not be included in the archive.  Error message: '{}'.", path.as_ref().display(), err);
 				return (None, false);
 			}
 		};
@@ -595,7 +595,7 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 		blocks.push(secret.to_hex());
 
 		if (total_read % (64*1024*1024)) == 0 {
-			println!("Progress: {}MB of {}MB", (progress + total_read as u64) / (1024*1024), total_size / (1024*1024));
+			info!("Progress: {}MB of {}MB", (progress + total_read as u64) / (1024*1024), total_size / (1024*1024));
 		}
 	}
 

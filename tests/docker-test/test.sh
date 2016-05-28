@@ -36,7 +36,7 @@ docker run -v $BACKUP_DIR:/backup -v $RESTORE_DIR:/restore --rm preserve-test-re
 # uid/gid.
 echo ""
 echo "---------- DIFF ----------"
-tar --diff -f exported-backup-image.tar -C $RESTORE_DIR |& grep -vE "^tar: (dev|proc|sys|backup)[:/].*No such file or directory$" | grep -vE "^tar: etc/(hostname|hosts|resolv.conf): Warning: Cannot stat: No such file or directory$" | grep -v "^.*Gid differs$" | grep -v "^preserve/cache.sqlite: .*$" || true
+tar --diff -f exported-backup-image.tar -C $RESTORE_DIR |& grep -vE "^tar: (dev|proc|sys|backup)[:/].*No such file or directory$" | grep -vE "^tar: etc/(hostname|hosts|resolv.conf): Warning: Cannot stat: No such file or directory$" | grep -v "^.*Gid differs$" | grep -v "^preserve/cache.sqlite: .*$" | grep -v "^preserve/log.txt: .*$" || true
 
 echo ""
 echo "--------------------------"

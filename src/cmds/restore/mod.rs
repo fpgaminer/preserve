@@ -133,10 +133,10 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 
 		if let Some(ref symlink_path) = file.symlink {
 			use std::os::unix;
-			println!("Creating symlink: {} {}", symlink_path, filepath.display());
+			info!("Creating symlink: {} {}", symlink_path, filepath.display());
 			unix::fs::symlink(symlink_path, &filepath).unwrap();
 		} else if file.is_dir {
-			println!("Creating directory: {}", filepath.display());
+			info!("Creating directory: {}", filepath.display());
 			// Create and then set permissions.  This is done in two steps because
 			// mkdir is affected by the current process's umask, whereas chmod (set_permissions) is not.
 			fs::create_dir(&filepath).unwrap();
@@ -149,7 +149,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 				} else {
 					match hardlink_map.get(&hardlink_id) {
 						Some(existing_path) => {
-							println!("Hardlinking '{}' to '{}'", existing_path.display(), filepath.display());
+							info!("Hardlinking '{}' to '{}'", existing_path.display(), filepath.display());
 							fs::hard_link(existing_path, &filepath).unwrap();
 							true
 						},
@@ -161,7 +161,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			};
 
 			if !hardlinked {
-				println!("Writing file: {}", filepath.display());
+				info!("Writing file: {}", filepath.display());
 				// We set permissions after creating the file because `open` uses umask.
 				extract_file(&filepath, file, block_store, cache_dir, download_cache, backend);
 				fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)).unwrap();
@@ -194,7 +194,7 @@ fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cac
 	/* TODO: This doesn't seem like a bulletproof way to do this */
 	/* Check if file exists */
 	if file.seek(SeekFrom::End(0)).unwrap() != 0 {
-		println!("File {} Already Exists", path.as_ref().to_str().unwrap());
+		error!("File {} Already Exists", path.as_ref().to_str().unwrap());
 		return;
 	}
 
@@ -209,7 +209,7 @@ fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cac
 	}
 
 	if total_written as u64 != f.size {
-		println!("Size mismatch: {} != {}", total_written, f.size);
+		error!("Size mismatch: {} != {}", total_written, f.size);
 	}
 }
 

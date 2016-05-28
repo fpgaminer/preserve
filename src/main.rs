@@ -7,6 +7,9 @@ extern crate libc;
 extern crate acd;
 extern crate tempdir;
 extern crate rusqlite;
+#[macro_use]
+extern crate log;
+extern crate time;
 
 #[macro_use]
 pub mod newtype_macros;
@@ -15,8 +18,11 @@ mod archive;
 mod backend;
 mod block;
 mod cmds;
+mod logger;
 
 use std::env;
+use logger::Logger;
+use log::LogLevelFilter;
 
 
 const USAGE: &'static str = "
@@ -35,6 +41,8 @@ See 'preserve help <command>' for more information on a specific command.
 
 
 fn main() {
+	Logger::init(LogLevelFilter::Info).unwrap();
+
 	let args: Vec<String> = env::args().collect();
 
 	if args.len() < 2 {
