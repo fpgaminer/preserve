@@ -1,21 +1,25 @@
 use keystore::KeyStore;
-use getopts::Options;
-use std::io;
-use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::fs::OpenOptions;
+use std::io::{self, BufWriter, Write};
+use clap::ArgMatches;
 
 
-pub fn execute(args: &[String]) {
-	let mut opts = Options::new();
-	opts.optopt("", "keyfile", "set output filename", "NAME");
-
-	let matches = match opts.parse(args) {
-		Ok(m) => m,
-		Err(err) => panic!(err.to_string())
-	};
-
-	let mut writer: BufWriter<Box<Write>> = BufWriter::new(match matches.opt_str("keyfile") {
-		Some(path) => Box::new(File::create(path).unwrap()),
+pub fn execute(args: &ArgMatches) {
+	let mut writer: BufWriter<Box<Write>> = BufWriter::new(match args.value_of("keyfile") {
+		Some(path) => {
+			// Won't overwrite existing files
+			let file = match OpenOptions::new().write(true).create_new(true).open(path) {
+				Ok(f) => f,
+				Err(e) => if e.kind() == io::ErrorKind::AlreadyExists {
+					error!("'{}' already exists.", path);
+					return;
+				} else {
+					error!("Could not open '{}' for writing: {}", path, e);
+					return;
+				},
+			};
+			Box::new(file)
+		},
 		None => Box::new(io::stdout()),
 	});
 

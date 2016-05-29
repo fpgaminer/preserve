@@ -1,5 +1,4 @@
 use keystore::{KeyStore, Secret};
-use getopts::Options;
 use std::fs;
 use std::io::{BufReader, stderr, Write};
 use std::collections::HashSet;
@@ -7,36 +6,18 @@ use rustc_serialize::hex::FromHex;
 use backend::{FileBackend, AcdBackend, Backend};
 use archive::{Archive, File};
 use rand::{thread_rng, Rng};
+use clap::ArgMatches;
 
 
-pub fn execute(args: &[String]) {
-	let mut opts = Options::new();
-	opts.reqopt("", "keyfile", "set keyfile", "NAME");
-	opts.reqopt("", "backend", "set backend", "BACKEND");
-	opts.optopt("", "backend-path", "set backend path", "PATH");
+pub fn execute(args: &ArgMatches) {
+	let backup_name = args.value_of("NAME").unwrap();
 
-	let matches = match opts.parse(args) {
-		Ok(m) => m,
-		Err(err) => panic!(err.to_string())
-	};
-
-	if matches.free.len() != 1 {
-		println!("Usage: preserve verify backup-name [OPTIONS]");
-		return;
-	}
-
-	let backup_name = matches.free[0].clone();
-
-	let mut reader = BufReader::new(match matches.opt_str("keyfile") {
-		Some(path) => fs::File::open(path).unwrap(),
-		None => panic!("missing keyfile option"),
-	});
-
+	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
 	let keystore = KeyStore::load(&mut reader);
 	let mut backend: Box<Backend> = {
-		match &matches.opt_str("backend").unwrap()[..] {
+		match &args.value_of("backend").unwrap()[..] {
 			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(matches.opt_str("backend-path").unwrap())),
+			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
 			x => panic!("Unknown backend {}", x),
 		}
 	};

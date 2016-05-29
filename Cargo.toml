@@ -8,7 +8,7 @@ repository = "https://github.com/fpgaminer/preserve"
 version = "0.1.0"
 
 [dependencies]
-getopts = "^0.2"
+clap = "2.5.1"
 libc = "^0.2"
 log = "0.3.6"
 rand = "^0.3"

@@ -1,5 +1,4 @@
 use keystore::{KeyStore, Secret};
-use getopts::Options;
 use std::fs;
 use std::io::{Read, BufReader};
 use block::BlockStore;
@@ -12,42 +11,23 @@ use archive::{Archive, File};
 use rusqlite;
 use std::collections::{HashSet, HashMap};
 use std::env;
+use clap::ArgMatches;
 
 
-pub fn execute(args: &[String]) {
-	let mut opts = Options::new();
-	opts.reqopt("", "keyfile", "set keyfile", "NAME");
-	opts.reqopt("", "backend", "set backend", "BACKEND");
-	opts.optopt("", "backend-path", "set backend path", "PATH");
-	opts.optflag("", "dereference", "follow symlinks");
-
-	let matches = match opts.parse(args) {
-		Ok(m) => m,
-		Err(err) => panic!(err.to_string())
-	};
-
-	if matches.free.len() != 2 {
-		println!("Usage: preserve create [OPTIONS] backup-name directory-to-backup");
-		return;
-	}
-
+pub fn execute(args: &ArgMatches) {
 	let mut config = Config::default();
-	let backup_name = matches.free[0].clone();
-	let target_directory = Path::new(&matches.free[1].clone()).canonicalize().unwrap();
+	let backup_name = args.value_of("NAME").unwrap();
+	let target_directory = Path::new(args.value_of("PATH").unwrap()).canonicalize().unwrap();
 
-	config.dereference_symlinks = matches.opt_present("dereference");
+	config.dereference_symlinks = args.is_present("dereference");
 
-	let mut reader = BufReader::new(match matches.opt_str("keyfile") {
-		Some(path) => fs::File::open(path).unwrap(),
-		None => panic!("missing keyfile option"),
-	});
-
+	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
 	let keystore = KeyStore::load(&mut reader);
 	let block_store = BlockStore::new(&keystore);
 	let mut backend: Box<Backend> = {
-		match &matches.opt_str("backend").unwrap()[..] {
+		match &args.value_of("backend").unwrap()[..] {
 			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(matches.opt_str("backend-path").unwrap())),
+			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
 			x => panic!("Unknown backend {}", x),
 		}
 	};

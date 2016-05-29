@@ -1,5 +1,4 @@
 use keystore::{KeyStore, Secret, BlockId};
-use getopts::Options;
 use std::fs;
 use std::io::{self, BufReader, BufWriter, Write, SeekFrom, Seek, Read};
 use block::BlockStore;
@@ -10,6 +9,7 @@ use rustc_serialize::hex::FromHex;
 use backend::{FileBackend, AcdBackend, Backend};
 use archive::{Archive, File};
 use tempdir::TempDir;
+use clap::ArgMatches;
 
 
 struct DownloadCache {
@@ -20,51 +20,34 @@ struct DownloadCache {
 }
 
 
-pub fn execute(args: &[String]) {
-	let mut opts = Options::new();
-	opts.reqopt("", "keyfile", "set keyfile", "NAME");
-	opts.optflag("", "debug-decrypt", "just fetch and decrypt the archive; no decompression, no parsing, no extraction");
-	opts.reqopt("", "backend", "set backend", "BACKEND");
-	opts.optopt("", "backend-path", "set backend path", "PATH");
-	opts.optflag("", "hard-dereference", "dereference hardlinks");
+pub fn execute(args: &ArgMatches) {
+	let debug_decrypt = args.is_present("debug-decrypt");
 
-	let matches = match opts.parse(args) {
-		Ok(m) => m,
-		Err(err) => panic!(err.to_string())
-	};
-
-	let debug_decrypt = matches.opt_present("debug-decrypt");
-
-	if (debug_decrypt && matches.free.len() != 1) || (!debug_decrypt && matches.free.len() != 2) {
-		println!("Usage: preserve restore backup-name directory-to-extract-to [OPTIONS]");
+	if !debug_decrypt && !args.is_present("PATH") {
+		error!("Missing <PATH> option");
 		return;
 	}
 
-	let backup_name = matches.free[0].clone();
-	let target_directory = if matches.free.len() > 1 {
-		Path::new(&matches.free[1].clone()).canonicalize().unwrap()
-	} else {
-		PathBuf::new()
+	let backup_name = args.value_of("NAME").unwrap();
+	let target_directory = match args.value_of("PATH") {
+		Some(path) => Path::new(path).canonicalize().unwrap(),
+		None => PathBuf::new(),
 	};
 
-	let mut reader = BufReader::new(match matches.opt_str("keyfile") {
-		Some(path) => fs::File::open(path).unwrap(),
-		None => panic!("missing keyfile option"),
-	});
-
+	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
 	let keystore = KeyStore::load(&mut reader);
 	let block_store = BlockStore::new(&keystore);
 	let mut backend: Box<Backend> = {
-		match &matches.opt_str("backend").unwrap()[..] {
+		match &args.value_of("backend").unwrap()[..] {
 			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(matches.opt_str("backend-path").unwrap())),
+			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
 			x => panic!("Unknown backend {}", x),
 		}
 	};
 
 	let mut config = Config::default();
 
-	config.dereference_hardlinks = matches.opt_present("hard-dereference");
+	config.dereference_hardlinks = args.is_present("hard-dereference");
 
 	let encrypted_archive_name = keystore.encrypt_archive_name(&backup_name);
 	let encrypted_archive = backend.fetch_archive(&encrypted_archive_name);
@@ -87,6 +70,8 @@ pub fn execute(args: &[String]) {
 	build_block_refcounts(&archive.files, &keystore, &mut download_cache);
 
 	extract_files(&config, &archive.files, target_directory.to_str().unwrap(), &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend, );
+
+	info!("Restore completed successfully");
 }
 
 
@@ -189,6 +174,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 
 fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
 	// TODO: Don't overwrite files?
+	// TODO: OpenOptions now has the ability to atomically open a file and not overwrite.  Use that (create_new I think?).
 	let mut file = fs::OpenOptions::new().write(true).create(true).open(path.as_ref()).unwrap();
 
 	/* TODO: This doesn't seem like a bulletproof way to do this */
