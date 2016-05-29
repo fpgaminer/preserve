@@ -1,5 +1,4 @@
  * Clean up TODOs, panics, and unwraps.
- * Proper logging
  * Test individual components of backup system (unit testing)
  * Grab the inodes of our cache files, and then skip those during backup.
  * Add a config option, --dereference, which will handle symlinks by "dereferencing" them.  A symlink will become a regular file in the archive with the contents set to the the contents of the target.  This can be applied either during archive creation, or during extraction (implemented for create, but not restore).
@@ -24,3 +23,4 @@
  * The Docker based integration test should test the ACD backend as well (waiting on the ability to specify ACD path for the ACD path).
  * Add the ability to extract specific files/folders during a restore.
  * rust-acd should use the log.
+ * verbose flag

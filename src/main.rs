@@ -35,7 +35,7 @@ fn main() {
 						.setting(AppSettings::UnifiedHelpMessage)
 						.setting(AppSettings::ColoredHelp)
                         .args_from_usage(
-							"--logfile=[FILE]     'Sets a file to write a log to'
+							"--logfile=[LOGFILE]     'Sets a file to write a log to'
 							 --verbose            'Be verbose'")
                         .subcommand(SubCommand::with_name("create")
 							.about("create a new backup")
@@ -90,7 +90,7 @@ fn main() {
 						)
 						.get_matches();
 
-	Logger::init(LogLevelFilter::Info).unwrap();
+	Logger::init(LogLevelFilter::Info, matches.value_of("logfile")).unwrap();
 
 	match matches.subcommand() {
 		("create", Some(sub_m)) => cmds::create::execute(sub_m),

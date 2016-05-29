@@ -3,6 +3,7 @@ use time;
 use std::fs::File;
 use std::io::Write;
 use std::sync::Mutex;
+use std::path::Path;
 
 
 pub struct Logger {
@@ -43,14 +44,14 @@ impl log::Log for Logger {
 }
 
 impl Logger {
-	pub fn init(log_level: LogLevelFilter) -> Result<(), SetLoggerError> {
-		let f = File::create("log.txt").unwrap();
+	pub fn init<P: AsRef<Path>>(log_level: LogLevelFilter, log_file_path: Option<P>) -> Result<(), SetLoggerError> {
+		let log_file = log_file_path.map(|path| Mutex::new(File::create(path).unwrap()));
 
 		log::set_logger(|max_log_level| {
 			max_log_level.set(log_level);
 			Box::new(Logger {
 				log_level: log_level,
-				log_file: Some(Mutex::new(f)),
+				log_file: log_file,
 			})
 		})
 	}
