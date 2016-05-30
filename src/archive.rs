@@ -47,7 +47,7 @@ impl Archive {
 	pub fn encrypt(self, keystore: &KeyStore) -> (EncryptedArchiveName, EncryptedArchive) {
 		let encrypted_name = keystore.encrypt_archive_name(&self.name);
 
-		let encoded = json::as_pretty_json(&self);
+		let encoded = json::as_json(&self);
 		let compressed = lzma::compress(encoded.to_string().as_bytes(), 9 | lzma::EXTREME_PRESET).unwrap();
 		let encrypted_archive = keystore.encrypt_archive(&encrypted_name, &compressed);
 
