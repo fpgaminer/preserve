@@ -1,7 +1,7 @@
 use rustc_serialize::json;
 use rustc_serialize;
 use rand::{OsRng, Rng};
-use std::io;
+use std::io::{self, BufReader};
 use rustc_serialize::hex::{ToHex, FromHex};
 use crypto;
 use crypto::chacha20::ChaCha20;
@@ -12,6 +12,9 @@ use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::curve25519;
 use rustc_serialize::base64::{self, ToBase64, FromBase64, FromBase64Error};
 use std::str::FromStr;
+use error::*;
+use std::path::Path;
+use std::fs;
 
 
 new_type!{
@@ -129,10 +132,17 @@ impl KeyStore {
 		write!(writer, "{}", json::as_pretty_json(&self)).unwrap();
 	}
 
-	pub fn load<R: io::Read>(reader: &mut R) -> KeyStore {
+	pub fn load<R: io::Read>(reader: &mut R) -> Result<KeyStore> {
 		let mut data = String::new();
-		reader.read_to_string(&mut data).unwrap();
-		json::decode(&data).unwrap()
+		try!(reader.read_to_string(&mut data));
+		Ok(try!(json::decode(&data)))
+	}
+
+	pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<KeyStore> {
+		let file = try!(fs::File::open(path));
+		let mut reader = BufReader::new(file);
+
+		KeyStore::load(&mut reader)
 	}
 
 	/// The maximum supported name is 127 bytes long (UTF-8 encoded).
@@ -320,7 +330,7 @@ impl ToString for EncryptedArchiveName {
 impl FromStr for EncryptedArchiveName {
 	type Err = FromBase64Error;
 
-	fn from_str(s: &str) -> Result<EncryptedArchiveName, Self::Err> {
+	fn from_str(s: &str) -> ::std::result::Result<EncryptedArchiveName, Self::Err> {
 		Ok(EncryptedArchiveName(try!(s.from_base64())))
 	}
 }
@@ -452,7 +462,7 @@ mod test {
 		let mut buffer = vec![0u8; 0];
 
 		keystore.save(&mut buffer);
-		let output = KeyStore::load(&mut Cursor::new(buffer));
+		let output = KeyStore::load(&mut Cursor::new(buffer)).unwrap();
 
 		assert_eq!(output, keystore);
 	}

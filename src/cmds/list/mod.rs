@@ -1,19 +1,25 @@
 use keystore::KeyStore;
-use std::fs;
-use std::io::BufReader;
-use backend::{FileBackend, AcdBackend, Backend};
+use backend;
 use clap::ArgMatches;
 
 
 pub fn execute(args: &ArgMatches) {
-	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
+	let args_keyfile = args.value_of("keyfile").unwrap();
+	let args_backend = args.value_of("backend").unwrap();
 
-	let keystore = KeyStore::load(&mut reader);
-	let mut backend: Box<Backend> = {
-		match &args.value_of("backend").unwrap()[..] {
-			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
-			x => panic!("Unknown backend {}", x),
+	let keystore = match KeyStore::load_from_path(args_keyfile) {
+		Ok(keystore) => keystore,
+		Err(err) => {
+			error!("Unable to load keyfile: {}", err);
+			return;
+		}
+	};
+
+	let mut backend = match backend::backend_from_backend_path(args_backend) {
+		Ok(backend) => backend,
+		Err(err) => {
+			error!("Unable to load backend: {}", err);
+			return;
 		}
 	};
 

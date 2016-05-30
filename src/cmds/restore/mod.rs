@@ -1,12 +1,12 @@
 use keystore::{KeyStore, Secret, BlockId};
 use std::fs;
-use std::io::{self, BufReader, BufWriter, Write, SeekFrom, Seek, Read};
+use std::io::{self, BufWriter, Write, SeekFrom, Seek, Read};
 use block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::{MetadataExt, DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::collections::HashMap;
 use rustc_serialize::hex::FromHex;
-use backend::{FileBackend, AcdBackend, Backend};
+use backend::{self, Backend};
 use archive::{Archive, File};
 use tempdir::TempDir;
 use clap::ArgMatches;
@@ -28,20 +28,29 @@ pub fn execute(args: &ArgMatches) {
 		return;
 	}
 
+	let args_keyfile = args.value_of("keyfile").unwrap();
+	let args_backend = args.value_of("backend").unwrap();
 	let backup_name = args.value_of("NAME").unwrap();
 	let target_directory = match args.value_of("PATH") {
 		Some(path) => Path::new(path).canonicalize().unwrap(),
 		None => PathBuf::new(),
 	};
 
-	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
-	let keystore = KeyStore::load(&mut reader);
+	let keystore = match KeyStore::load_from_path(args_keyfile) {
+		Ok(keystore) => keystore,
+		Err(err) => {
+			error!("Unable to load keyfile: {}", err);
+			return;
+		}
+	};
+
 	let block_store = BlockStore::new(&keystore);
-	let mut backend: Box<Backend> = {
-		match &args.value_of("backend").unwrap()[..] {
-			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
-			x => panic!("Unknown backend {}", x),
+
+	let mut backend = match backend::backend_from_backend_path(args_backend) {
+		Ok(backend) => backend,
+		Err(err) => {
+			error!("Unable to load backend: {}", err);
+			return;
 		}
 	};
 

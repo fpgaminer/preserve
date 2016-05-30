@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
 use rustc_serialize::hex::{ToHex, FromHex};
 use std::string::ToString;
-use backend::{AcdBackend, FileBackend, Backend};
+use backend::{self, Backend};
 use archive::{Archive, File};
 use rusqlite;
 use std::collections::{HashSet, HashMap};
@@ -16,19 +16,28 @@ use clap::ArgMatches;
 
 pub fn execute(args: &ArgMatches) {
 	let mut config = Config::default();
+	let args_keyfile = args.value_of("keyfile").unwrap();
+	let args_backend = args.value_of("backend").unwrap();
 	let backup_name = args.value_of("NAME").unwrap();
 	let target_directory = Path::new(args.value_of("PATH").unwrap()).canonicalize().unwrap();
 
 	config.dereference_symlinks = args.is_present("dereference");
 
-	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
-	let keystore = KeyStore::load(&mut reader);
+	let keystore = match KeyStore::load_from_path(args_keyfile) {
+		Ok(keystore) => keystore,
+		Err(err) => {
+			error!("Unable to load keyfile: {}", err);
+			return;
+		}
+	};
+
 	let block_store = BlockStore::new(&keystore);
-	let mut backend: Box<Backend> = {
-		match &args.value_of("backend").unwrap()[..] {
-			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
-			x => panic!("Unknown backend {}", x),
+
+	let mut backend = match backend::backend_from_backend_path(args_backend) {
+		Ok(backend) => backend,
+		Err(err) => {
+			error!("Unable to load backend: {}", err);
+			return;
 		}
 	};
 

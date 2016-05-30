@@ -1,9 +1,7 @@
 use keystore::{KeyStore, Secret};
-use std::fs;
-use std::io::{BufReader, stderr, Write};
 use std::collections::HashSet;
 use rustc_serialize::hex::FromHex;
-use backend::{FileBackend, AcdBackend, Backend};
+use backend::{self, Backend};
 use archive::{Archive, File};
 use rand::{thread_rng, Rng};
 use clap::ArgMatches;
@@ -11,14 +9,22 @@ use clap::ArgMatches;
 
 pub fn execute(args: &ArgMatches) {
 	let backup_name = args.value_of("NAME").unwrap();
+	let args_keyfile = args.value_of("keyfile").unwrap();
+	let args_backend = args.value_of("backend").unwrap();
 
-	let mut reader = BufReader::new(fs::File::open(args.value_of("keyfile").unwrap()).unwrap());
-	let keystore = KeyStore::load(&mut reader);
-	let mut backend: Box<Backend> = {
-		match &args.value_of("backend").unwrap()[..] {
-			"acd" => Box::new(AcdBackend::new()),
-			"file" => Box::new(FileBackend::new(args.value_of("backend-path").unwrap())),
-			x => panic!("Unknown backend {}", x),
+	let keystore = match KeyStore::load_from_path(args_keyfile) {
+		Ok(keystore) => keystore,
+		Err(err) => {
+			error!("Unable to load keyfile: {}", err);
+			return;
+		}
+	};
+
+	let mut backend = match backend::backend_from_backend_path(args_backend) {
+		Ok(backend) => backend,
+		Err(err) => {
+			error!("Unable to load backend: {}", err);
+			return;
 		}
 	};
 
@@ -64,7 +70,7 @@ fn verify_blocks(block_list: &[&String], keystore: &KeyStore, backend: &mut Back
 		let encrypted_block = backend.fetch_block(&block_id);
 
 		if !keystore.verify_encrypted_block(&block_id, &encrypted_block) {
-			writeln!(stderr(), "CRITICAL ERROR: Block {} is corrupt.  You should save a copy of the corrupted block, delete it, and then rearchive the files that created this archive.  That should recreate the block.", block_id.to_string()).unwrap();
+			error!("CRITICAL ERROR: Block {} is corrupt.  You should save a copy of the corrupted block, delete it, and then rearchive the files that created this archive.  That should recreate the block.", block_id.to_string());
 			corrupted_blocks.push(block_id.to_string());
 		}
 

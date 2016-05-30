@@ -130,8 +130,7 @@ impl TestConfig {
 			.current_dir(&self.working_dir)
 			.arg("create")
 			.arg("--keyfile").arg("keyfile")
-			.arg("--backend").arg("file")
-			.arg("--backend-path").arg(&self.backend_dir)
+			.arg("--backend").arg("file://".to_string() + &self.backend_dir.to_string_lossy())
 			.arg(backup_name)
 			.arg(path.as_ref())
 			.output().unwrap();
@@ -147,8 +146,7 @@ impl TestConfig {
 			.current_dir(&self.working_dir)
 			.arg("restore")
 			.arg("--keyfile").arg("keyfile")
-			.arg("--backend").arg("file")
-			.arg("--backend-path").arg(&self.backend_dir)
+			.arg("--backend").arg("file://".to_string() + &self.backend_dir.to_string_lossy())
 			.arg(backup_name)
 			.arg(restore_dir.path())
 			.output().unwrap();

@@ -11,6 +11,7 @@ extern crate log;
 extern crate time;
 #[macro_use]
 extern crate clap;
+extern crate url;
 
 #[macro_use]
 pub mod newtype_macros;
@@ -20,6 +21,7 @@ mod backend;
 mod block;
 mod cmds;
 mod logger;
+mod error;
 
 use logger::Logger;
 use log::LogLevelFilter;
@@ -35,19 +37,18 @@ fn main() {
 						.setting(AppSettings::UnifiedHelpMessage)
 						.setting(AppSettings::ColoredHelp)
                         .args_from_usage(
-							"--logfile=[LOGFILE]     'Sets a file to write a log to'
+							"--logfile=[LOGFILE]  'Sets a file to write a log to'
 							 --verbose            'Be verbose'")
                         .subcommand(SubCommand::with_name("create")
 							.about("create a new backup")
 							.setting(AppSettings::UnifiedHelpMessage)
 							.setting(AppSettings::ColoredHelp)
                             .args_from_usage(
-								"--keyfile=<KEYFILE>           'Sets the keyfile to use'
-								 --backend=<BACKEND>           'Sets the backend to use'
-								 --backend-path=[BACKEND_PATH] 'Sets the backend path to use'
-								 --dereference                 'Follow symlinks'
-								 <NAME>                        'Unique name for this backup'
-								 <PATH>                        'The path to backup'")
+								"--keyfile=<KEYFILE>  'Sets the keyfile to use'
+								 --backend=<BACKEND>  'Sets the backend to use'
+								 --dereference        'Follow symlinks'
+								 <NAME>               'Unique name for this backup'
+								 <PATH>               'The path to backup'")
 						)
 						.subcommand(SubCommand::with_name("keygen")
 							.about("create a new keyfile")
@@ -61,36 +62,33 @@ fn main() {
 							.setting(AppSettings::UnifiedHelpMessage)
 							.setting(AppSettings::ColoredHelp)
                             .args_from_usage(
-								"--keyfile=<KEYFILE>      'Sets the keyfile to use'
-								 --backend=<BACKEND>   'Sets the backend to use'
-								 --backend-path=[BACKEND_PATH] 'Sets the backend path to use'")
+								"--keyfile=<KEYFILE>  'Sets the keyfile to use'
+								 --backend=<BACKEND>  'Sets the backend to use'")
 						)
 						.subcommand(SubCommand::with_name("restore")
 							.about("restore an existing backup")
 							.setting(AppSettings::UnifiedHelpMessage)
 							.setting(AppSettings::ColoredHelp)
                             .args_from_usage(
-								"--keyfile=<KEYFILE>           'Sets the keyfile to use'
-								 --backend=<BACKEND>           'Sets the backend to use'
-								 --backend-path=[BACKEND_PATH] 'Sets the backend path to use'
-								 --hard-dereference            'Dereference hardlinks'
-								 --debug-decrypt               'Just fetch and decrypt the archive; no decompression, parsing, or extraction'
-								 <NAME>                        'Name of the backup to restore'
-								 [PATH]                        'Where to extract the backup to'")
+								"--keyfile=<KEYFILE>  'Sets the keyfile to use'
+								 --backend=<BACKEND>  'Sets the backend to use'
+								 --hard-dereference   'Dereference hardlinks'
+								 --debug-decrypt      'Just fetch and decrypt the archive; no decompression, parsing, or extraction'
+								 <NAME>               'Name of the backup to restore'
+								 [PATH]               'Where to extract the backup to'")
 						)
 						.subcommand(SubCommand::with_name("verify")
 							.about("verify the integrity of an existing backup and all encrypted blocks it references")
 							.setting(AppSettings::UnifiedHelpMessage)
 							.setting(AppSettings::ColoredHelp)
                             .args_from_usage(
-								"--keyfile=<KEYFILE>           'Sets the keyfile to use'
-								 --backend=<BACKEND>           'Sets the backend to use'
-								 --backend-path=[BACKEND_PATH] 'Sets the backend path to use'
-								 <NAME>                        'The name of the backup to verify'")
+								"--keyfile=<KEYFILE>  'Sets the keyfile to use'
+								 --backend=<BACKEND>  'Sets the backend to use'
+								 <NAME>               'The name of the backup to verify'")
 						)
 						.get_matches();
 
-	Logger::init(LogLevelFilter::Info, matches.value_of("logfile")).unwrap();
+	Logger::init(LogLevelFilter::Info, matches.value_of("logfile"));
 
 	match matches.subcommand() {
 		("create", Some(sub_m)) => cmds::create::execute(sub_m),

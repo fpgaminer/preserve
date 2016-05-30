@@ -78,16 +78,17 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
 			fixed_time_eq(this, other)
         }
     }
+
     impl ::std::cmp::Eq for $newtype {}
-	//use rustc_serialize;
+
     impl rustc_serialize::Encodable for $newtype {
-        fn encode<E: rustc_serialize::Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
+        fn encode<E: rustc_serialize::Encoder>(&self, encoder: &mut E) -> ::std::result::Result<(), E::Error> {
 			encoder.emit_str(&self[..].to_hex())
         }
     }
 
     impl rustc_serialize::Decodable for $newtype {
-        fn decode<D: rustc_serialize::Decoder>(decoder: &mut D) -> Result<$newtype, D::Error> {
+        fn decode<D: rustc_serialize::Decoder>(decoder: &mut D) -> ::std::result::Result<$newtype, D::Error> {
 			match try!(decoder.read_str()).from_hex() {
 				Ok(n) => match $newtype::from_slice(&n) {
 					Some(n) => Ok(n),
@@ -95,22 +96,6 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
 				},
 				Err(_) => Err(decoder.error("Expecting hex string")),
 			}
-            /*decoder.read_seq(|decoder, len| {
-                if len != $len {
-                    return Err(decoder.error(
-                        &format!("Expecting array of length: {}, but found {}",
-                                 $len, len)));
-                }
-                let mut res = $newtype([0; $len]);
-                {
-                    let $newtype(ref mut arr) = res;
-                    for (i, val) in arr.iter_mut().enumerate() {
-                        *val = try!(decoder.read_seq_elt(i,
-                            |decoder| rustc_serialize::Decodable::decode(decoder)));
-                    }
-                }
-                Ok(res)
-            })*/
         }
     }
     /// Allows a user to access the byte contents of an object as a slice.

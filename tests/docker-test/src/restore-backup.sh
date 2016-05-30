@@ -2,4 +2,4 @@
 set -e
 
 cd /preserve
-./preserve restore --keyfile /backup/keyfile --backend file --backend-path /backup testbackup2 /restore
+./preserve restore --keyfile /backup/keyfile --backend file:///backup testbackup2 /restore
