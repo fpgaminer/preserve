@@ -1,4 +1,4 @@
- * Clean up TODOs, panics, and unwraps.
+ * Clean up TODOs and improve error reporting.
  * Test individual components of backup system (unit testing)
  * Grab the inodes of our cache files, and then skip those during backup.
  * Add a config option, --dereference, which will handle symlinks by "dereferencing" them.  A symlink will become a regular file in the archive with the contents set to the the contents of the target.  This can be applied either during archive creation, or during extraction (implemented for create, but not restore).

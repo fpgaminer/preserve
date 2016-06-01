@@ -4,8 +4,8 @@ use clap::ArgMatches;
 
 
 pub fn execute(args: &ArgMatches) {
-	let args_keyfile = args.value_of("keyfile").unwrap();
-	let args_backend = args.value_of("backend").unwrap();
+	let args_keyfile = args.value_of("keyfile").expect("internal error");
+	let args_backend = args.value_of("backend").expect("internal error");
 
 	let keystore = match KeyStore::load_from_path(args_keyfile) {
 		Ok(keystore) => keystore,
@@ -23,11 +23,23 @@ pub fn execute(args: &ArgMatches) {
 		}
 	};
 
-	let encrypted_archive_names = backend.list_archives();
+	let encrypted_archive_names = match backend.list_archives() {
+		Ok(names) => names,
+		Err(err) => {
+			error!("There was a problem listing the archives: {}", err);
+			return;
+		}
+	};
 
 	// TODO: Push into a vec, sort alphabetically, and then print
 	for encrypted_archive_name in &encrypted_archive_names {
-		let archive_name = keystore.decrypt_archive_name(encrypted_archive_name);
+		let archive_name = match keystore.decrypt_archive_name(encrypted_archive_name) {
+			Ok(name) => name,
+			Err(err) => {
+				warn!("Could not decrypt one of the archive names, '{}', because: {}", encrypted_archive_name.to_string(), err);
+				continue;
+			}
+		};
 
 		println!("{}", archive_name);
 	}

@@ -1,6 +1,6 @@
 use keystore::{KeyStore, Secret, BlockId};
 use std::fs;
-use std::io::{self, BufWriter, Write, SeekFrom, Seek, Read};
+use std::io::{self, BufWriter, Write, Read};
 use block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::{MetadataExt, DirBuilderExt, OpenOptionsExt, PermissionsExt};
@@ -10,6 +10,7 @@ use backend::{self, Backend};
 use archive::{Archive, File};
 use tempdir::TempDir;
 use clap::ArgMatches;
+use error::*;
 
 
 struct DownloadCache {
@@ -28,13 +29,24 @@ pub fn execute(args: &ArgMatches) {
 		return;
 	}
 
-	let args_keyfile = args.value_of("keyfile").unwrap();
-	let args_backend = args.value_of("backend").unwrap();
-	let backup_name = args.value_of("NAME").unwrap();
+	let args_keyfile = args.value_of("keyfile").expect("internal error");
+	let args_backend = args.value_of("backend").expect("internal error");
+	let backup_name = args.value_of("NAME").expect("internal error");
 	let target_directory = match args.value_of("PATH") {
-		Some(path) => Path::new(path).canonicalize().unwrap(),
+		Some(path) => match Path::new(path).canonicalize() {
+			Ok(path) => path,
+			Err(err) => {
+				error!("Unable to find the destination path: {}", err);
+				return;
+			},
+		},
 		None => PathBuf::new(),
 	};
+
+	if backup_name.as_bytes().len() >= 128 {
+		error!("Backup name must be less than 128 bytes (UTF-8)");
+		return;
+	}
 
 	let keystore = match KeyStore::load_from_path(args_keyfile) {
 		Ok(keystore) => keystore,
@@ -58,27 +70,70 @@ pub fn execute(args: &ArgMatches) {
 
 	config.dereference_hardlinks = args.is_present("hard-dereference");
 
-	let encrypted_archive_name = keystore.encrypt_archive_name(&backup_name);
-	let encrypted_archive = backend.fetch_archive(&encrypted_archive_name);
+	let encrypted_archive_name = match keystore.encrypt_archive_name(&backup_name) {
+		Ok(name) => name,
+		Err(err) => {
+			error!("There was a problem with the backup name: {}", err);
+			return;
+		},
+	};
+	let encrypted_archive = match backend.fetch_archive(&encrypted_archive_name) {
+		Ok(archive) => archive,
+		Err(err) => {
+			error!("There was a problem fetching the backup: {}", err);
+			return;
+		},
+	};
 
 	if debug_decrypt {
-		let decrypted = keystore.decrypt_archive(&encrypted_archive_name, &encrypted_archive);
-		io::stdout().write(&decrypted).unwrap();
+		let decrypted = match keystore.decrypt_archive(&encrypted_archive_name, &encrypted_archive) {
+			Ok(archive) => archive,
+			Err(err) => {
+				error!("There was a problem decrypting the backup: {}", err);
+				return;
+			}
+		};
+		io::stdout().write(&decrypted).expect("error while writing to stdout");
 		return;
 	}
 
-	let archive = Archive::decrypt(&encrypted_archive_name, &encrypted_archive, &keystore);
+	let archive = match Archive::decrypt(&encrypted_archive_name, &encrypted_archive, &keystore) {
+		Ok(archive) => archive,
+		Err(err) => {
+			error!("There was a problem decrypting the backup: {}", err);
+			return;
+		}
+	};
 
 	if archive.version != 0x00000001 {
-		panic!("Unsupported archive version");
+		error!("Unsupported archive version");
+		return;
 	}
 
-	let download_cache_dir = TempDir::new("preserve-").unwrap();
+	let download_cache_dir = match TempDir::new("preserve-") {
+		Ok(dir) => dir,
+		Err(err) => {
+			error!("There was a problem creating a temporary directory: {}", err);
+			return;
+		},
+	};
 	let mut download_cache = HashMap::new();
 
-	build_block_refcounts(&archive.files, &keystore, &mut download_cache);
+	match build_block_refcounts(&archive.files, &keystore, &mut download_cache) {
+		Ok(x) => x,
+		Err(err) => {
+			error!("There was a problem reading the backup: {}", err);
+			return;
+		},
+	}
 
-	extract_files(&config, &archive.files, target_directory.to_str().unwrap(), &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend, );
+	match extract_files(&config, &archive.files, target_directory, &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend) {
+		Ok(x) => x,
+		Err(err) => {
+			error!("There was a problem extracting the backup: {}", err);
+			return;
+		},
+	}
 
 	info!("Restore completed successfully");
 }
@@ -92,16 +147,19 @@ struct Config {
 }
 
 
-fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) {
+fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) -> Result<()> {
 	for file in files {
-		build_block_refcounts_helper(file, keystore, download_cache);
+		try!(build_block_refcounts_helper(file, keystore, download_cache));
 	}
+
+	Ok(())
 }
 
 
-fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) {
+fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) -> Result<()> {
 	for secret_str in &file.blocks {
-		let secret = Secret::from_slice(&secret_str.from_hex().unwrap()).unwrap();
+		let secret_hex = try!(secret_str.from_hex().map_err(|_| Error::CorruptArchiveBadBlockSecret));
+		let secret = try!(Secret::from_slice(&secret_hex).ok_or(Error::CorruptArchiveBadBlockSecret));
 		let block_id = keystore.block_id_from_block_secret(&secret);
 
 		download_cache.entry(secret_str.clone()).or_insert(DownloadCache{
@@ -110,12 +168,14 @@ fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache
 			id: block_id,
 			secret: secret,
 		});
-		download_cache.get_mut(secret_str).unwrap().refcount += 1;
+		download_cache.get_mut(secret_str).expect("internal error").refcount += 1;
 	}
+
+	Ok(())
 }
 
 
-fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
+fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Result<()> {
 	let mut hardlink_map: HashMap<u64, PathBuf> = HashMap::new();
 	// List of all directories and the mtimes they need set.
 	// We set these after extracting all files, since extracting the files changes the mtime of
@@ -128,13 +188,13 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 		if let Some(ref symlink_path) = file.symlink {
 			use std::os::unix;
 			info!("Creating symlink: {} {}", symlink_path, filepath.display());
-			unix::fs::symlink(symlink_path, &filepath).unwrap();
+			try!(unix::fs::symlink(symlink_path, &filepath));
 		} else if file.is_dir {
 			info!("Creating directory: {}", filepath.display());
 			// Create and then set permissions.  This is done in two steps because
 			// mkdir is affected by the current process's umask, whereas chmod (set_permissions) is not.
-			fs::create_dir(&filepath).unwrap();
-			fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)).unwrap();
+			try!(fs::create_dir(&filepath));
+			try!(fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)));
 			directory_times.push((filepath.clone(), file.mtime, file.mtime_nsec));
 		} else {
 			let hardlinked = if let Some(hardlink_id) = file.hardlink_id {
@@ -144,7 +204,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 					match hardlink_map.get(&hardlink_id) {
 						Some(existing_path) => {
 							info!("Hardlinking '{}' to '{}'", existing_path.display(), filepath.display());
-							fs::hard_link(existing_path, &filepath).unwrap();
+							try!(fs::hard_link(existing_path, &filepath));
 							true
 						},
 						None => false,
@@ -157,8 +217,8 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			if !hardlinked {
 				info!("Writing file: {}", filepath.display());
 				// We set permissions after creating the file because `open` uses umask.
-				extract_file(&filepath, file, block_store, cache_dir, download_cache, backend);
-				fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)).unwrap();
+				try!(extract_file(&filepath, file, block_store, cache_dir, download_cache, backend));
+				try!(fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)));
 
 				if !config.dereference_hardlinks {
 					if let Some(hardlink_id) = file.hardlink_id {
@@ -168,7 +228,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			}
 		}
 
-		set_file_time(&filepath, file.mtime, file.mtime_nsec);
+		try!(set_file_time(&filepath, file.mtime, file.mtime_nsec));
 	}
 
 	// Set mtime for directories.
@@ -176,75 +236,70 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 	directory_times.reverse();
 
 	for (ref dirpath, ref mtime, ref mtime_nsec) in directory_times {
-		set_file_time(dirpath, *mtime, *mtime_nsec);
+		try!(set_file_time(dirpath, *mtime, *mtime_nsec));
 	}
+
+	Ok(())
 }
 
 
-fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) {
-	// TODO: Don't overwrite files?
-	// TODO: OpenOptions now has the ability to atomically open a file and not overwrite.  Use that (create_new I think?).
-	let mut file = fs::OpenOptions::new().write(true).create(true).open(path.as_ref()).unwrap();
-
-	/* TODO: This doesn't seem like a bulletproof way to do this */
-	/* Check if file exists */
-	if file.seek(SeekFrom::End(0)).unwrap() != 0 {
-		error!("File {} Already Exists", path.as_ref().to_str().unwrap());
-		return;
-	}
-
+fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Result<()> {
+	// Don't overwrite existing files
+	let file = try!(fs::OpenOptions::new().write(true).create_new(true).open(path.as_ref()));
 	let mut writer = BufWriter::new(&file);
 	let mut total_written = 0;
 
 	for secret in &f.blocks {
-		let plaintext = cache_fetch(secret, block_store, cache_dir, download_cache, backend);
+		let plaintext = try!(cache_fetch(secret, block_store, cache_dir, download_cache, backend));
 
-		writer.write_all(&plaintext).unwrap();
+		try!(writer.write_all(&plaintext));
 		total_written += plaintext.len();
 	}
 
 	if total_written as u64 != f.size {
-		error!("Size mismatch: {} != {}", total_written, f.size);
+		error!("The final extracted size of '{}' did not match what was expected: {} != {}", path.as_ref().display(), total_written, f.size);
 	}
+
+	Ok(())
 }
 
 
-fn cache_fetch(secret_str: &str, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Vec<u8> {
-	let cache = download_cache.get_mut(secret_str).unwrap();
+fn cache_fetch(secret_str: &str, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Result<Vec<u8>> {
+	let cache = download_cache.get_mut(secret_str).expect("internal error");
 	let path = cache_dir.join(cache.id.to_string());
 
 	if cache.downloaded {
 		let plaintext = {
-			let mut file = fs::File::open(path.clone()).unwrap();
+			let mut file = try!(fs::File::open(path.clone()));
 			let mut plaintext = vec![0u8; 0];
-			file.read_to_end(&mut plaintext).unwrap();
+			try!(file.read_to_end(&mut plaintext));
 			plaintext
 		};
 
 		cache.refcount -= 1;
 
 		if cache.refcount == 0 {
-			fs::remove_file(path).unwrap();
+			try!(fs::remove_file(path));
 		}
 
-		return plaintext;
+		Ok(plaintext)
+	} else {
+		let plaintext = try!(block_store.fetch_block(&cache.secret, backend));
+
+		cache.refcount -=1;
+		cache.downloaded = true;
+
+		if cache.refcount > 0 {
+			let mut file = try!(fs::File::create(path));
+			try!(file.write_all(&plaintext));
+		}
+
+		Ok(plaintext)
 	}
-
-	let plaintext = block_store.fetch_block(&cache.secret, backend);
-
-	cache.refcount -=1;
-	cache.downloaded = true;
-
-	if cache.refcount > 0 {
-		let mut file = fs::File::create(path).unwrap();
-		file.write_all(&plaintext).unwrap();
-	}
-
-	plaintext
 }
 
 
-fn set_file_time(path: &Path, mtime: i64, mtime_nsec: i64) {
+fn set_file_time(path: &Path, mtime: i64, mtime_nsec: i64) -> Result<()> {
 	use std::ffi::CString;
 	use std::os::unix::prelude::*;
 	use libc::{time_t, timespec, utimensat, c_long, AT_FDCWD, AT_SYMLINK_NOFOLLOW};
@@ -258,13 +313,13 @@ fn set_file_time(path: &Path, mtime: i64, mtime_nsec: i64) {
 		tv_sec: mtime as time_t,
 		tv_nsec: mtime_nsec as c_long,
 	}];
-	let p = CString::new(path.as_os_str().as_bytes()).unwrap();
+	let p = CString::new(path.as_os_str().as_bytes()).expect("internal error");
 
 	unsafe {
 		if utimensat(AT_FDCWD, p.as_ptr() as *const _, times.as_ptr(), AT_SYMLINK_NOFOLLOW) == 0 {
 			Ok(())
 		} else {
-			Err(io::Error::last_os_error())
+			Err(io::Error::last_os_error().into())
 		}
-	}.unwrap();
+	}
 }

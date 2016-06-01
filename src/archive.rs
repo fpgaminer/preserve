@@ -1,6 +1,7 @@
 use keystore::{KeyStore, EncryptedArchiveName, EncryptedArchive};
 use lzma;
 use rustc_serialize::json;
+use error::*;
 
 
 #[derive(RustcDecodable, RustcEncodable, Clone)]
@@ -44,20 +45,21 @@ pub struct Archive {
 
 
 impl Archive {
-	pub fn encrypt(self, keystore: &KeyStore) -> (EncryptedArchiveName, EncryptedArchive) {
-		let encrypted_name = keystore.encrypt_archive_name(&self.name);
+	pub fn encrypt(self, keystore: &KeyStore) -> Result<(EncryptedArchiveName, EncryptedArchive)> {
+		let encrypted_name = try!(keystore.encrypt_archive_name(&self.name));
 
 		let encoded = json::as_json(&self);
-		let compressed = lzma::compress(encoded.to_string().as_bytes(), 9 | lzma::EXTREME_PRESET).unwrap();
+		let compressed = lzma::compress(encoded.to_string().as_bytes(), 9 | lzma::EXTREME_PRESET).expect("internal error");  // Compression shouldn't fail
 		let encrypted_archive = keystore.encrypt_archive(&encrypted_name, &compressed);
 
-		(encrypted_name, encrypted_archive)
+		Ok((encrypted_name, encrypted_archive))
 	}
 
-	pub fn decrypt(encrypted_name: &EncryptedArchiveName, encrypted_archive: &EncryptedArchive, keystore: &KeyStore) -> Archive {
-		let compressed = keystore.decrypt_archive(encrypted_name, encrypted_archive);
+	pub fn decrypt(encrypted_name: &EncryptedArchiveName, encrypted_archive: &EncryptedArchive, keystore: &KeyStore) -> Result<Archive> {
+		let compressed = try!(keystore.decrypt_archive(encrypted_name, encrypted_archive));
 
-		let data = String::from_utf8(lzma::decompress(&compressed).unwrap()).unwrap();
-		json::decode(&data).unwrap()
+		let decompressed = try!(lzma::decompress(&compressed).map_err(|_| Error::CorruptArchiveFailedDecompression));
+		let data = try!(String::from_utf8(decompressed).map_err(|_| Error::CorruptArchiveNotUtf8));
+		json::decode(&data).map_err(|_| Error::CorruptArchiveBadJson)
 	}
 }

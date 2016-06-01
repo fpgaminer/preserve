@@ -5,9 +5,10 @@ use clap::ArgMatches;
 
 
 pub fn execute(args: &ArgMatches) {
-	let mut writer: BufWriter<Box<Write>> = BufWriter::new(match args.value_of("keyfile") {
+	// Open output file/stdout for writing
+	let file: Box<Write> = match args.value_of("keyfile") {
 		Some(path) => {
-			// Won't overwrite existing files
+			// Won't overwrite existing file
 			let file = match OpenOptions::new().write(true).create_new(true).open(path) {
 				Ok(f) => f,
 				Err(e) => if e.kind() == io::ErrorKind::AlreadyExists {
@@ -21,9 +22,18 @@ pub fn execute(args: &ArgMatches) {
 			Box::new(file)
 		},
 		None => Box::new(io::stdout()),
-	});
+	};
+	let mut writer = BufWriter::new(file);
 
+	// Create a new keystore
 	let keystore = KeyStore::new();
 
-	keystore.save(&mut writer);
+	// Save the keystore to the destination (file/stdout)
+	match keystore.save(&mut writer) {
+		Ok(_) => (),
+		Err(err) => {
+			error!("Could not write to keyfile: {}", err);
+			return;
+		}
+	}
 }

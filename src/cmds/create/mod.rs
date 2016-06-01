@@ -12,16 +12,22 @@ use rusqlite;
 use std::collections::{HashSet, HashMap};
 use std::env;
 use clap::ArgMatches;
+use error::*;
 
 
 pub fn execute(args: &ArgMatches) {
 	let mut config = Config::default();
-	let args_keyfile = args.value_of("keyfile").unwrap();
-	let args_backend = args.value_of("backend").unwrap();
-	let backup_name = args.value_of("NAME").unwrap();
-	let target_directory = Path::new(args.value_of("PATH").unwrap()).canonicalize().unwrap();
+	let args_keyfile = args.value_of("keyfile").expect("internal error");
+	let args_backend = args.value_of("backend").expect("internal error");
+	let backup_name = args.value_of("NAME").expect("internal error");
+	let target_directory = Path::new(args.value_of("PATH").expect("internal error"));
 
 	config.dereference_symlinks = args.is_present("dereference");
+
+	if backup_name.as_bytes().len() >= 128 {
+		error!("Backup name must be less than 128 bytes (UTF-8)");
+		return;
+	}
 
 	let keystore = match KeyStore::load_from_path(args_keyfile) {
 		Ok(keystore) => keystore,
@@ -43,21 +49,61 @@ pub fn execute(args: &ArgMatches) {
 
 	// Build archive
 	let archive = {
-		let mut builder = ArchiveBuilder::new(config, &target_directory, &mut *backend, &block_store);
+		let mut builder = match ArchiveBuilder::new(config, &target_directory, &mut *backend, &block_store) {
+			Ok(builder) => builder,
+			Err(err) => {
+				error!("There was a problem initializing the archive builder: {}", err);
+				return;
+			},
+		};
 		info!("Gathering list of files...");
-		builder.walk();
+		match builder.walk() {
+			Ok(_) => (),
+			Err(err) => {
+				error!("{}", err);
+				return;
+			}
+		}
 		info!("Reading files...");
-		builder.read_files();
+		match builder.read_files() {
+			Ok(_) => (),
+			Err(Error::Sqlite(err)) => {
+				error!("There was a problem accessing the cache database: {}", err);
+				return;
+			}
+			Err(err) => {
+				error!("There was a problem while reading the files: {}", err);
+				return;
+			}
+		}
 		builder.warn_about_missing_symlinks();
 		builder.warn_about_missing_hardlinks();
 
-		builder.create_archive(&backup_name)
+		match builder.create_archive(&backup_name) {
+			Ok(archive) => archive,
+			Err(err) => {
+				error!("{}", err);
+				return;
+			}
+		}
 	};
 
 	info!("Writing archive...");
-	let (encrypted_archive_name, encrypted_archive) = archive.encrypt(&keystore);
-	backend.store_archive(&encrypted_archive_name, &encrypted_archive);
-	info!("Done");
+	let (encrypted_archive_name, encrypted_archive) = match archive.encrypt(&keystore) {
+		Ok(x) => x,
+		Err(err) => {
+			error!("There was a problem encrypting the backup: {}", err);
+			return;
+		}
+	};
+	match backend.store_archive(&encrypted_archive_name, &encrypted_archive) {
+		Ok(_) => (),
+		Err(err) => {
+			error!("There was a problem storing the archive: {}", err);
+			return;
+		}
+	}
+	info!("Backup created successfully");
 }
 
 
@@ -111,14 +157,14 @@ struct ArchiveBuilder<'a> {
 }
 
 impl<'a> ArchiveBuilder<'a> {
-	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, block_store: &'a BlockStore) -> ArchiveBuilder<'a> {
+	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, block_store: &'a BlockStore) -> Result<ArchiveBuilder<'a>> {
 		let base_path = if base_path.as_ref().is_relative() {
-			env::current_dir().unwrap().join(base_path)
+			try!(env::current_dir()).join(base_path)
 		} else {
 			PathBuf::from(base_path.as_ref())
 		};
 
-		ArchiveBuilder {
+		Ok(ArchiveBuilder {
 			config: config,
 			base_path: base_path,
 			hardlink_map: HashMap::new(),
@@ -128,33 +174,33 @@ impl<'a> ArchiveBuilder<'a> {
 			files: Vec::new(),
 			backend: backend,
 			block_store: block_store,
-		}
+		})
 	}
 
-	fn open_cache_db(&self) -> rusqlite::Connection {
-		let db = rusqlite::Connection::open("cache.sqlite").unwrap();
+	fn open_cache_db(&self) -> Result<rusqlite::Connection> {
+		let db = try!(rusqlite::Connection::open("cache.sqlite"));
 
-		db.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
+		try!(db.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
 			path TEXT NOT NULL,
 			mtime INTEGER NOT NULL,
 			mtime_nsec INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			blocks TEXT NOT NULL
-		)", &[]).unwrap();
+		)", &[]));
 
-		db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", &[]).unwrap();
-		db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", &[]).unwrap();
+		try!(db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", &[]));
+		try!(db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", &[]));
 
-		db
+		Ok(db)
 	}
 
 	// Walk the file tree from self.base_path, gathering metadata about all the files
-	fn walk(&mut self) {
+	fn walk(&mut self) -> Result<()> {
 		self.files = Vec::new();
 		self.total_size = 0;
 
 		let base_path = self.base_path.clone();
-		let base_path_metadata = self.base_path.metadata().unwrap();
+		let base_path_metadata = try!(self.base_path.metadata());
 		let current_filesystem = Some(base_path_metadata.dev());
 		let mut unscanned_paths: Vec<PathBuf> = Vec::new();
 
@@ -173,21 +219,23 @@ impl<'a> ArchiveBuilder<'a> {
 			self.total_size += file.file.size;
 			self.files.push(file);
 		}
+
+		Ok(())
 	}
 
-	fn create_archive(&self, name: &str) -> Archive {
+	fn create_archive(&self, name: &str) -> Result<Archive> {
 		let mut files = Vec::new();
 
 		for file in &self.files {
 			files.push(file.file.clone());
 		}
 
-		Archive {
+		Ok(Archive {
 			version: 0x00000001,
 			name: name.to_owned(),
-			original_path: self.base_path.canonicalize().unwrap().to_str().unwrap().to_string(),
+			original_path: try!(self.base_path.canonicalize()).to_string_lossy().to_string(),
 			files: files,
-		}
+		})
 	}
 
 	// Given a path, read the metadata for the file, handle symlinks, hardlinks, etc and return an ArchiveBuilderFile or None if a problem was encountered.
@@ -272,10 +320,16 @@ impl<'a> ArchiveBuilder<'a> {
 		};
 
 		// The path stored in the archive is relative to the archive's base_path
-		let filepath = match path.as_ref().strip_prefix(&self.base_path).unwrap().to_str() {
-			Some(filepath) => filepath.to_string(),
-			None => {
-				warn!("Unable to read path of '{}' as UTF-8 string.  It will not be included in the archive.", path.as_ref().display());
+		let filepath = match path.as_ref().strip_prefix(&self.base_path) {
+			Ok(filepath) => match filepath.to_str () {
+				Some(filepath) => filepath.to_string(),
+				None => {
+					warn!("Unable to read path of '{}' as UTF-8 string.  It will not be included in the archive.", path.as_ref().display());
+					return None
+				}
+			},
+			Err(_) => {
+				warn!("An internal error occured involving strip_prefix.  The file '{}' will not be included in the archive.", path.as_ref().display());
 				return None
 			}
 		};
@@ -409,7 +463,10 @@ impl<'a> ArchiveBuilder<'a> {
 				};
 				symlinks.push((file.file.path.clone(), target));
 			} else {
-				paths_archived.insert(file.canonical_path.clone().unwrap());
+				match file.canonical_path.clone() {
+					Some(path) => {paths_archived.insert(path); ()},
+					None => (),
+				}
 			}
 		}
 
@@ -423,9 +480,9 @@ impl<'a> ArchiveBuilder<'a> {
 		}
 	}
 
-	fn read_files(&mut self) {
+	fn read_files(&mut self) -> Result<()> {
 		let mut progress = 0;
-		let cache_db = self.open_cache_db();
+		let cache_db = try!(self.open_cache_db());
 
 		for file in &mut self.files {
 			if file.file.is_dir || file.file.symlink.is_some() {
@@ -433,7 +490,7 @@ impl<'a> ArchiveBuilder<'a> {
 			}
 
 			info!("Reading file: {}", file.file.path);
-			match read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size) {
+			match try!(read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size)) {
 				Some(blocks) => file.file.blocks.extend(blocks),
 				None => file.missing = true,
 			};
@@ -443,22 +500,31 @@ impl<'a> ArchiveBuilder<'a> {
 		}
 
 		self.files.retain(|ref file| !file.missing);
+
+		Ok(())
 	}
 }
 
 
-fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Option<Vec<String>> {
+fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Result<Option<Vec<String>>> {
 	let path = base_path.as_ref().join(&file.file.path);
 	let canonical_path = match file.canonical_path.clone() {
 		Some(canonical_path) => canonical_path,
 		None => {
 			warn!("Unable to canonicalize path for '{}'.  It will not be included in the archive.", path.display());
-			return None;
+			return Ok(None);
+		}
+	};
+	let canonical_path_str = match canonical_path.to_str() {
+		Some(path) => path,
+		None => {
+			warn!("Unable to canonicalize path for '{}'.  It is not a UTF-8 string.  It will not be included in the archive.", path.display());
+			return Ok(None);
 		}
 	};
 
 	// Check to see if we have this file in the cache
-	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
+	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path_str.to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
 		row.get(0)
 	});
 
@@ -471,8 +537,23 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 
 			if !blocks_str.is_empty() {
 				for block in blocks_str.split('\n') {
-					let secret = Secret::from_slice(&block.from_hex().unwrap()).unwrap();
-					if !block_store.block_exists(&secret, backend) {
+					let block_hex = match block.from_hex() {
+						Ok(x) => x,
+						Err(_) => {
+							warn!("A bad block secret was found in the cache database.  The cache database might be corrupted.");
+							need_reread = true;
+							break;
+						}
+					};
+					let secret = match Secret::from_slice(&block_hex) {
+						Some(x) => x,
+						None => {
+							warn!("A bad block secret was found in the cache database.  The cache database might be corrupted.");
+							need_reread = true;
+							break;
+						}
+					};
+					if !try!(block_store.block_exists(&secret, backend)) {
 						need_reread = true;
 						break;
 					}
@@ -482,11 +563,11 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 
 			if !need_reread {
 				debug!("Found in mtime cache.");
-				return Some(blocks);
+				return Ok(Some(blocks));
 			}
 		},
 		Err(rusqlite::Error::QueryReturnedNoRows) => (),
-		Err(err) => panic!("Sqlite error: {}", err),
+		Err(err) => return Err(err.into()),
 	};
 
 	// Not cached or missing blocks, so let's actually read the file
@@ -504,49 +585,49 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 			},
 			Err(err) => {
 				warn!("An error was received while checking the metadata for '{}'.  It will not be included in the archive.  Error message: '{}'.", path.display(), err);
-				return None;
+				return Ok(None);
 			}
 		};
 
 		// Read file contents
-		let (blocks, should_retry) = read_file_inner(&path, block_store, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size);
+		let (blocks, should_retry) = try!(read_file_inner(&path, block_store, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size));
 
 		let blocks = match blocks {
 			Some(blocks) => blocks,
 			None => {
 				// Reading failed.  Should we retry?
 				if !should_retry {
-					return None
+					return Ok(None)
 				}
 
 				// Reading failed due to the file changing.  Let's retry.
 				if retries == 2 {
-					warn!("File '{}' keeps changing.  It will not be included in the archive.", path.display());
-					return None
+					warn!("File '{}' keeps changing or causing I/O errors.  It will not be included in the archive.", path.display());
+					return Ok(None)
 				}
 
-				warn!("File changed, restarting from beginning.");
+				warn!("File changed or we encountered an I/O error, restarting from beginning.");
 				retries += 1;
 				continue;
 			},
 		};
 
 		let blocks_str = blocks.join("\n");
-		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path.to_str().unwrap().to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]).unwrap();
+		try!(cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]));
 
-		return Some(blocks);
+		return Ok(Some(blocks));
 	}
 }
 
 
 // Used by read_file.  read_file checks the cache, etc.  This will actually read the file into blocks.
 // If any file modifications are detected while reading, this function will return (None, true) to indicate the caller that it should retry (if it wishes).
-fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> (Option<Vec<String>>, bool) {
+fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<String>>, bool)> {
 	let reader_file = match fs::File::open(&path) {
 		Ok(f) => f,
 		Err(err) => {
 			warn!("Unable to open file '{}'.  The following error was received: {}.  It will not be included in the archive.", path.as_ref().display(), err);
-			return (None, false)
+			return Ok((None, false))
 		},
 	};
 	let reader = BufReader::new(&reader_file);
@@ -557,19 +638,26 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 
 	loop {
 		buffer.clear();
-		reader_ref.take(1024*1024).read_to_end(&mut buffer).unwrap();
+		match reader_ref.take(1024*1024).read_to_end(&mut buffer) {
+			Ok(_) => (),
+			Err(err) => {
+				// Problem reading the file.  Restart.
+				warn!("An error was encountered while reading '{}': {}", path.as_ref().display(), err);
+				return Ok((None, true));
+			},
+		}
 
 		// Check for file modification
 		match path.as_ref().metadata() {
 			Ok(metadata) => {
 				if metadata.mtime() != expected_mtime || metadata.mtime_nsec() != expected_mtime_nsec {
 					// The file has been modified.  Restart.
-					return (None, true);
+					return Ok((None, true));
 				}
 			},
 			Err(err) => {
 				warn!("An error was received while checking the metadata for '{}'.  It will not be included in the archive.  Error message: '{}'.", path.as_ref().display(), err);
-				return (None, false);
+				return Ok((None, false));
 			}
 		};
 
@@ -579,7 +667,7 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 
 		total_read += buffer.len();
 
-		let Secret(secret) = block_store.new_block_from_plaintext(&buffer, backend);
+		let Secret(secret) = try!(block_store.new_block_from_plaintext(&buffer, backend));
 		// TODO: Should we implement ToString for Secret and use that instead?
 		blocks.push(secret.to_hex());
 
@@ -590,8 +678,8 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 
 	if total_read as u64 != expected_size {
 		// File was modified
-		return (None, true);
+		return Ok((None, true));
 	}
 
-	(Some(blocks), false)
+	Ok((Some(blocks), false))
 }

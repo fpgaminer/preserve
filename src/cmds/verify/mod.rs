@@ -8,9 +8,9 @@ use clap::ArgMatches;
 
 
 pub fn execute(args: &ArgMatches) {
-	let backup_name = args.value_of("NAME").unwrap();
-	let args_keyfile = args.value_of("keyfile").unwrap();
-	let args_backend = args.value_of("backend").unwrap();
+	let backup_name = args.value_of("NAME").expect("internal error");
+	let args_keyfile = args.value_of("keyfile").expect("internal error");
+	let args_backend = args.value_of("backend").expect("internal error");
 
 	let keystore = match KeyStore::load_from_path(args_keyfile) {
 		Ok(keystore) => keystore,
@@ -28,13 +28,31 @@ pub fn execute(args: &ArgMatches) {
 		}
 	};
 
-	let encrypted_archive_name = keystore.encrypt_archive_name(&backup_name);
-	let encrypted_archive = backend.fetch_archive(&encrypted_archive_name);
-
-	let archive = Archive::decrypt(&encrypted_archive_name, &encrypted_archive, &keystore);
+	let encrypted_archive_name = match keystore.encrypt_archive_name(&backup_name) {
+		Ok(name) => name,
+		Err(err) => {
+			error!("{}", err);
+			return;
+		}
+	};
+	let encrypted_archive = match backend.fetch_archive(&encrypted_archive_name) {
+		Ok(archive) => archive,
+		Err(err) => {
+			error!("{}", err);
+			return;
+		}
+	};
+	let archive = match Archive::decrypt(&encrypted_archive_name, &encrypted_archive, &keystore) {
+		Ok(archive) => archive,
+		Err(err) => {
+			error!("{}", err);
+			return;
+		}
+	};
 
 	if archive.version != 0x00000001 {
-		panic!("Unsupported archive version");
+		error!("Unsupported archive version");
+		return;
 	}
 
 	let mut block_list = HashSet::new();
@@ -64,10 +82,32 @@ fn verify_blocks(block_list: &[&String], keystore: &KeyStore, backend: &mut Back
 	let mut corrupted_blocks = Vec::new();
 
 	for (idx, secret_str) in block_list.iter().enumerate() {
-		let secret = Secret::from_slice(&secret_str.from_hex().unwrap()).unwrap();
+		let secret = {
+			let secret_str_hex = match secret_str.from_hex() {
+				Ok(s) => s,
+				Err(_) => {
+					error!("CRITICAL ERROR: A Block secret contained invalid hex characters.  This is not normal and should never happen.  Probably the archive's version got mixed up somehow.  Secret: '{}'", secret_str);
+					continue;
+				},
+			};
+			match Secret::from_slice(&secret_str_hex) {
+				Some(s) => s,
+				None => {
+					error!("CRITICAL ERROR: A Block secret was not the right number of bytes.  This is not normal and should never happen.  Probably the archive's version got mixed up somehow.  Secret: '{}'", secret_str);
+					continue;
+				}
+			}
+		};
 		let block_id = keystore.block_id_from_block_secret(&secret);
 
-		let encrypted_block = backend.fetch_block(&block_id);
+		// TODO: Differentiate between a missing block and an error.  Missing blocks would be critical errors.
+		let encrypted_block = match backend.fetch_block(&block_id) {
+			Ok(block) => block,
+			Err(err) => {
+				error!("A problem occured while fetching the block '{}': {}", block_id.to_string(), err);
+				continue;
+			}
+		};
 
 		if !keystore.verify_encrypted_block(&block_id, &encrypted_block) {
 			error!("CRITICAL ERROR: Block {} is corrupt.  You should save a copy of the corrupted block, delete it, and then rearchive the files that created this archive.  That should recreate the block.", block_id.to_string());
