@@ -59,8 +59,6 @@ pub fn execute(args: &ArgMatches) {
 
 	build_block_list(&archive.files, &mut block_list);
 	let mut block_list: Vec<&String> = block_list.iter().collect();
-	// TODO: Verify what RNG rust is going to use here.  We don't need crypto secure RNG, but do
-	// need something good.
 	// We shuffle so that if verification is terminated it can be run again (multiple times) and
 	// probablistically cover all blocks.
 	thread_rng().shuffle(&mut block_list);

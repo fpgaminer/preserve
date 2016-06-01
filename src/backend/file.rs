@@ -33,7 +33,6 @@ impl FileBackend {
 		{
 			let mut file = try!(OpenOptions::new().write(true).create(true).open(&temppath));
 
-			// TODO: Should we use BufWriter here?  Profile
 			try!(file.write_all(data));
 		}
 
