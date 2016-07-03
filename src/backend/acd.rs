@@ -28,7 +28,7 @@ impl AcdBackend {
 			try!(json::decode(&s))
 		};
 
-		let acd = try!(acd::Client::new(&security_profile.client_id, &security_profile.client_secret, ".config"));
+		let acd = try!(acd::Client::new(&security_profile.client_id, &security_profile.client_secret, ".config", 1000000));
 
 		Ok(AcdBackend {
 			acd: acd,
