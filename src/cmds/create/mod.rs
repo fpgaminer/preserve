@@ -491,8 +491,12 @@ impl<'a> ArchiveBuilder<'a> {
 
 			info!("Reading file: {}", file.file.path);
 			match try!(read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size)) {
-				Some(blocks) => file.file.blocks.extend(blocks),
-				None => file.missing = true,
+				Some(blocks) => {
+					file.file.blocks.extend(blocks);
+				},
+				None => {
+					file.missing = true
+				},
 			};
 
 			progress += file.file.size;
