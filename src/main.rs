@@ -6,7 +6,6 @@ extern crate libc;
 extern crate acd;
 extern crate ceph_rust;
 extern crate tempdir;
-extern crate rusqlite;
 #[macro_use]
 extern crate log;
 extern crate time;

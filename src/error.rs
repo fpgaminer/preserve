@@ -2,7 +2,6 @@ use std::error::Error as StdError;
 use std::io::Error as IoError;
 use rustc_serialize::json::DecoderError as JsonDecoderError;
 use acd::Error as AcdError;
-use rusqlite::Error as SqliteError;
 use std::fmt;
 use self::Error::*;
 
@@ -33,7 +32,6 @@ pub enum Error {
     ArchiveNotFound,
     InvalidArchiveName,
     BackendOnDifferentDevices,
-    Sqlite(SqliteError),
 }
 
 impl fmt::Display for Error {
@@ -69,7 +67,6 @@ impl StdError for Error {
             }
             ArchiveNameConflict => "An archive with that name already exists",
             BackendOnDifferentDevices => "All folders in the backend must be on the same drive",
-            Sqlite(ref e) => e.description(),
             CorruptArchiveBadBlockSecret => {
                 "The archive is corrupted.  One of the block secrets could not be parsed"
             }
@@ -96,7 +93,6 @@ impl StdError for Error {
             InvalidArchiveName => None,
             ArchiveNotFound => None,
             BackendOnDifferentDevices => None,
-            Sqlite(ref error) => Some(error),
             CorruptArchiveBadBlockSecret => None,
         }
     }
@@ -123,11 +119,5 @@ impl From<AcdError> for Error {
 impl From<::ceph_rust::ceph::RadosError> for Error {
     fn from(err: ::ceph_rust::ceph::RadosError) -> Error {
         RadosError(err)
-    }
-}
-
-impl From<SqliteError> for Error {
-    fn from(err: SqliteError) -> Error {
-        Sqlite(err)
     }
 }
