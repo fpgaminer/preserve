@@ -230,6 +230,7 @@ impl KeyStore {
 	pub fn decrypt_archive(&self, &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName, &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<Vec<u8>> {
 		/* TODO: Nasty fat constants */
 		if payload.len() < 64 {
+			println!("encrypted payload: {:?}", payload);
 			return Err(Error::CorruptArchiveTruncated);
 		}
 
