@@ -1,3 +1,7 @@
+// Debugging only
+// #![feature(alloc_system)]
+// extern crate alloc_system;
+
 extern crate acd;
 extern crate ceph_rust;
 #[macro_use]

@@ -242,7 +242,6 @@ impl KeyStore {
 		 &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<Vec<u8>> {
         // TODO: Nasty fat constants
         if payload.len() < 64 {
-            println!("encrypted payload: {:?}", payload);
             return Err(Error::CorruptArchiveTruncated);
         }
 
@@ -284,16 +283,12 @@ impl KeyStore {
 
     pub fn encrypt_block(&self, id: &BlockId, secret: &Secret, block: &[u8]) -> EncryptedBlock {
         let encryption_key = kdf(&self.block_kdf_key, &secret);
-        println!("block len: {}", block.len());
         let ciphertext = encrypt(&encryption_key, block);
 
-        println!("ciphertext len: {}", ciphertext.len());
         let mac = {
             let mut buffer = vec![0u8; 0];
             buffer.extend_from_slice(&id[..]);
-            println!("mac extend_from_slice 1: {}", buffer.len());
             buffer.extend_from_slice(&ciphertext);
-            println!("mac extend_from_slice 2: {}", buffer.len());
             hmac(&self.block_hmac_key, &buffer).code().to_vec()
         };
 
@@ -394,7 +389,6 @@ fn kdf(kdf_key: &KdfKey, secret: &Secret) -> EncryptionKey {
 
 fn encrypt(key: &EncryptionKey, data: &[u8]) -> Vec<u8> {
     let mut encryptor = ChaCha20::new(&key.key[..], &key.nonce[..]);
-    println!("encrypt: data_len: {}", data.len());
     let mut output = vec!(0u8; data.len());
     encryptor.process(data, &mut output);
     output
