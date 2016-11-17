@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, BufWriter, Write, Read};
 use block::BlockStore;
 use std::path::{Path, PathBuf};
-use std::os::unix::fs::{MetadataExt, DirBuilderExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::collections::HashMap;
 use rustc_serialize::hex::FromHex;
 use backend::{self, Backend};

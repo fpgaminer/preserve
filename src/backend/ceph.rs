@@ -60,8 +60,10 @@ impl Backend for CephBackend {
     fn fetch_block(&mut self, id: &BlockId) -> Result<EncryptedBlock> {
         let block_id = id.to_string();
 
-        let mut ciphertext = Vec::<u8>::with_capacity(1024 * 1024);
-        try!(rados_object_read(self.ioctx, &block_id, &mut ciphertext, 0));
+        // 2MB buffer.  Should be enough for any chunk because they're broken into 1MB
+        let mut ciphertext = Vec::<u8>::with_capacity(1024 * 1024 * 2);
+        let bytes_read = try!(rados_object_read(self.ioctx, &block_id, &mut ciphertext, 0));
+        debug!("Read {} bytes from ceph for fetch_block", bytes_read);
 
         Ok(EncryptedBlock(ciphertext))
     }
@@ -69,7 +71,8 @@ impl Backend for CephBackend {
     fn fetch_archive(&mut self, name: &EncryptedArchiveName) -> Result<EncryptedArchive> {
         let mut ciphertext = Vec::<u8>::with_capacity(1024 * 1024);
         let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
-        try!(rados_object_read(ioctx, &name.to_string(), &mut ciphertext, 0));
+        let bytes_read = try!(rados_object_read(ioctx, &name.to_string(), &mut ciphertext, 0));
+        debug!("Read {} bytes from ceph for fetch_archive", bytes_read);
         destroy_rados_ioctx(ioctx);
 
         Ok(EncryptedArchive(ciphertext))

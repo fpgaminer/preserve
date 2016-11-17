@@ -1,28 +1,27 @@
-/*
-Copied and modified from github.com/dnaq/sodiumoxide
-
-Copyright (c) 2013 Daniel Ashhami
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-*/
+// Copied and modified from github.com/dnaq/sodiumoxide
+//
+// Copyright (c) 2013 Daniel Ashhami
+//
+// Permission is hereby granted, free of charge, to any person obtaining
+// a copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to
+// permit persons to whom the Software is furnished to do so, subject to
+// the following conditions:
+//
+// The above copyright notice and this permission notice shall be
+// included in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+// LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+// OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+// WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+//
+//
 
 
 macro_rules! newtype_clone (($newtype:ident) => (
@@ -36,10 +35,10 @@ macro_rules! newtype_clone (($newtype:ident) => (
         ));
 
 macro_rules! newtype_from_slice (($newtype:ident, $len:expr) => (
-    /// `from_slice()` creates an object from a byte slice
-    ///
-    /// This function will fail and return `None` if the length of
-    /// the byte-s;ice isn't equal to the length of the object
+/// `from_slice()` creates an object from a byte slice
+///
+/// This function will fail and return `None` if the length of
+/// the byte-s;ice isn't equal to the length of the object
     pub fn from_slice(bs: &[u8]) -> Option<$newtype> {
         if bs.len() != $len {
             return None;
@@ -82,13 +81,15 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
     impl ::std::cmp::Eq for $newtype {}
 
     impl rustc_serialize::Encodable for $newtype {
-        fn encode<E: rustc_serialize::Encoder>(&self, encoder: &mut E) -> ::std::result::Result<(), E::Error> {
+        fn encode<E: rustc_serialize::Encoder>(&self, encoder: &mut E) ->
+        ::std::result::Result<(), E::Error> {
 			encoder.emit_str(&self[..].to_hex())
         }
     }
 
     impl rustc_serialize::Decodable for $newtype {
-        fn decode<D: rustc_serialize::Decoder>(decoder: &mut D) -> ::std::result::Result<$newtype, D::Error> {
+        fn decode<D: rustc_serialize::Decoder>(decoder: &mut D) ->
+        ::std::result::Result<$newtype, D::Error> {
 			match try!(decoder.read_str()).from_hex() {
 				Ok(n) => match $newtype::from_slice(&n) {
 					Some(n) => Ok(n),
@@ -98,12 +99,12 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
 			}
         }
     }
-    /// Allows a user to access the byte contents of an object as a slice.
-    ///
-    /// WARNING: it might be tempting to do comparisons on objects
-    /// by using `x[a..b] == y[a..b]`. This will open up for timing attacks
-    /// when comparing for example authenticator tags. Because of this only
-    /// use the comparison functions exposed by the sodiumoxide API.
+/// Allows a user to access the byte contents of an object as a slice.
+///
+/// WARNING: it might be tempting to do comparisons on objects
+/// by using `x[a..b] == y[a..b]`. This will open up for timing attacks
+/// when comparing for example authenticator tags. Because of this only
+/// use the comparison functions exposed by the sodiumoxide API.
     impl ::std::ops::Index<::std::ops::Range<usize>> for $newtype {
         type Output = [u8];
         fn index(&self, _index: ::std::ops::Range<usize>) -> &[u8] {
@@ -111,12 +112,12 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
             b.index(_index)
         }
     }
-    /// Allows a user to access the byte contents of an object as a slice.
-    ///
-    /// WARNING: it might be tempting to do comparisons on objects
-    /// by using `x[..b] == y[..b]`. This will open up for timing attacks
-    /// when comparing for example authenticator tags. Because of this only
-    /// use the comparison functions exposed by the sodiumoxide API.
+/// Allows a user to access the byte contents of an object as a slice.
+///
+/// WARNING: it might be tempting to do comparisons on objects
+/// by using `x[..b] == y[..b]`. This will open up for timing attacks
+/// when comparing for example authenticator tags. Because of this only
+/// use the comparison functions exposed by the sodiumoxide API.
     impl ::std::ops::Index<::std::ops::RangeTo<usize>> for $newtype {
         type Output = [u8];
         fn index(&self, _index: ::std::ops::RangeTo<usize>) -> &[u8] {
@@ -124,12 +125,12 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
             b.index(_index)
         }
     }
-    /// Allows a user to access the byte contents of an object as a slice.
-    ///
-    /// WARNING: it might be tempting to do comparisons on objects
-    /// by using `x[a..] == y[a..]`. This will open up for timing attacks
-    /// when comparing for example authenticator tags. Because of this only
-    /// use the comparison functions exposed by the sodiumoxide API.
+/// Allows a user to access the byte contents of an object as a slice.
+///
+/// WARNING: it might be tempting to do comparisons on objects
+/// by using `x[a..] == y[a..]`. This will open up for timing attacks
+/// when comparing for example authenticator tags. Because of this only
+/// use the comparison functions exposed by the sodiumoxide API.
     impl ::std::ops::Index<::std::ops::RangeFrom<usize>> for $newtype {
         type Output = [u8];
         fn index(&self, _index: ::std::ops::RangeFrom<usize>) -> &[u8] {
@@ -137,12 +138,12 @@ macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
             b.index(_index)
         }
     }
-    /// Allows a user to access the byte contents of an object as a slice.
-    ///
-    /// WARNING: it might be tempting to do comparisons on objects
-    /// by using `x[] == y[]`. This will open up for timing attacks
-    /// when comparing for example authenticator tags. Because of this only
-    /// use the comparison functions exposed by the sodiumoxide API.
+/// Allows a user to access the byte contents of an object as a slice.
+///
+/// WARNING: it might be tempting to do comparisons on objects
+/// by using `x[] == y[]`. This will open up for timing attacks
+/// when comparing for example authenticator tags. Because of this only
+/// use the comparison functions exposed by the sodiumoxide API.
     impl ::std::ops::Index<::std::ops::RangeFull> for $newtype {
         type Output = [u8];
         fn index(&self, _index: ::std::ops::RangeFull) -> &[u8] {

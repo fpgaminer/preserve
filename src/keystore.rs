@@ -203,10 +203,12 @@ impl KeyStore {
 			let mut rng = OsRng::new().expect("OsRng failed to initialize");
 			rng.gen()
 		};
-		let ephemeral_public_key = Curve25519PublicKey::from_slice(&curve25519::curve25519_base(&ephemeral_private_key[..])).expect("internal error");
+		let ephemeral_public_key = Curve25519PublicKey::from_slice(
+			&curve25519::curve25519_base(&ephemeral_private_key[..])).expect("internal error");
 
 		let encryption_key = {
-			let shared_secret = Secret::from_slice(&curve25519::curve25519(&ephemeral_private_key[..], &self.archive_public_key[..])).expect("internal error");
+			let shared_secret = Secret::from_slice(&curve25519::curve25519(
+				&ephemeral_private_key[..], &self.archive_public_key[..])).expect("internal error");
 			kdf(&self.archive_kdf_key, &shared_secret)
 		};
 
@@ -227,7 +229,9 @@ impl KeyStore {
 		EncryptedArchive(payload)
 	}
 
-	pub fn decrypt_archive(&self, &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName, &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<Vec<u8>> {
+	pub fn decrypt_archive(&self,
+		 &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName,
+		 &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<Vec<u8>> {
 		/* TODO: Nasty fat constants */
 		if payload.len() < 64 {
 			println!("encrypted payload: {:?}", payload);

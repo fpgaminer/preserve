@@ -1,27 +1,27 @@
-extern crate rustc_serialize;
-extern crate crypto;
-extern crate rand;
-extern crate lzma;
-extern crate libc;
 extern crate acd;
 extern crate ceph_rust;
-extern crate tempdir;
-#[macro_use]
-extern crate log;
-extern crate time;
 #[macro_use]
 extern crate clap;
-extern crate url;
-
+extern crate crypto;
+extern crate libc;
+#[macro_use]
+extern crate log;
+extern crate lzma;
 #[macro_use]
 pub mod newtype_macros;
-mod keystore;
+extern crate rustc_serialize;
+extern crate rand;
+extern crate tempdir;
+extern crate time;
+extern crate url;
+
 mod archive;
 mod backend;
 mod block;
 mod cmds;
-mod logger;
 mod error;
+mod keystore;
+mod logger;
 
 use logger::Logger;
 use log::LogLevelFilter;
