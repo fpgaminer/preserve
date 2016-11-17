@@ -40,6 +40,8 @@ impl Drop for CephBackend {
 
 impl Backend for CephBackend {
     fn block_exists(&mut self, id: &BlockId) -> Result<bool> {
+        println!("block_exists");
+        println!("ioctx pointer: {:p}", self.ioctx);
         let block_id = id.to_string();
         match rados_object_stat(self.ioctx, &block_id) {
             Ok(_) => Ok(true),
@@ -52,13 +54,16 @@ impl Backend for CephBackend {
                    &EncryptedBlock(ref data): &EncryptedBlock)
                    -> Result<()> {
         let block_id = id.to_string();
-
+        println!("store block: {}", &block_id);
+        println!("ioctx pointer: {:p}", self.ioctx);
         try!(rados_object_write_full(self.ioctx, &block_id, data));
+        println!("stored block");
         Ok(())
     }
 
     fn fetch_block(&mut self, id: &BlockId) -> Result<EncryptedBlock> {
         let block_id = id.to_string();
+        println!("fetch block: {}", block_id);
 
         // 2MB buffer.  Should be enough for any chunk because they're broken into 1MB
         let mut ciphertext = Vec::<u8>::with_capacity(1024 * 1024 * 2);
@@ -69,6 +74,7 @@ impl Backend for CephBackend {
     }
 
     fn fetch_archive(&mut self, name: &EncryptedArchiveName) -> Result<EncryptedArchive> {
+        println!("fetch_archive");
         let mut ciphertext = Vec::<u8>::with_capacity(1024 * 1024);
         let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
         let bytes_read = try!(rados_object_read(ioctx, &name.to_string(), &mut ciphertext, 0));
@@ -82,6 +88,7 @@ impl Backend for CephBackend {
                      name: &EncryptedArchiveName,
                      &EncryptedArchive(ref payload): &EncryptedArchive)
                      -> Result<()> {
+        println!("store_archive");
         let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
 
         try!(rados_object_write_full(ioctx, &name.to_string(), payload));
@@ -90,6 +97,7 @@ impl Backend for CephBackend {
     }
 
     fn list_archives(&mut self) -> Result<Vec<EncryptedArchiveName>> {
+        println!("list_archives");
         let mut archives = Vec::new();
         let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
         let pool_list_ctx = try!(rados_list_pool_objects(ioctx));

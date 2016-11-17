@@ -24,7 +24,7 @@ git = "https://github.com/fpgaminer/rust-acd.git"
 optional = false
 
 [dependencies.ceph-rust]
-# git = "https://github.com/ceph/ceph-rust"
+# git = "https://github.com/cholcombe973/ceph-rust"
 path = "../ceph-rust"
 optional = false
 
