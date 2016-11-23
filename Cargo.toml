@@ -12,9 +12,9 @@ ceph = ["ceph-rust"]
 gluster = ["gfapi-sys"]
 
 [dependencies]
-ceph-rust = {path = "../ceph-rust", optional = true}
-clap = "2.5.1"
-gfapi-sys = {path = "../Gfapi-sys", optional = true}
+ceph-rust = {version = "^0.1", optional = true}
+clap = "^2.19"
+gfapi-sys = {version = "^0.2", optional = true}
 libc = "^0.2"
 log = "0.3.6"
 rand = "^0.3"
@@ -23,7 +23,7 @@ rust-lzma = "^0.2"
 rustc-serialize = "^0.3"
 tempdir = "^0.3"
 time = "0.1.35"
-url = "1.1.1"
+url = "^1.2"
 
 [dependencies.rust-acd]
 git = "https://github.com/fpgaminer/rust-acd.git"
