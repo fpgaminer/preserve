@@ -1,4 +1,4 @@
-# Preserve [![Build Status](https://travis-ci.org/fpgaminer/preserve.svg?branch=master)](https://travis-ci.org/fpgaminer/preserve) #
+# Preserve [![Build Status](https://travis-ci.org/cholcombe973/preserve.svg?branch=master)](https://travis-ci.org/cholcombe973/preserve) #
 Preserve is an encrypted backup system written in Rust.  All backup data is encrypted, so backups can be stored on untrusted devices/services without exposing any of your data.  Backups are simple, operating very similar to creating an archive like Zip or Tar.  Deduplication makes this space efficient.
 
 ## Usage
