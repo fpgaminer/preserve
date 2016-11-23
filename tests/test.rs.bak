@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::io::{Write, BufWriter};
 use tempdir::TempDir;
 use rand::{Rng, ChaChaRng};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::cmp;
 use std::os::unix;
 
@@ -238,6 +238,7 @@ impl TestGenerator {
                 } else {
                     self.rng.gen_range(0, 18)
                 };
+            println!("num_nodes_to_generate: {}", num_nodes_to_generate);
 
             for _ in 0..num_nodes_to_generate {
                 let filename = self.generate_random_name();
