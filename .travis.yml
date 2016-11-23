@@ -8,11 +8,16 @@ before_install:
   - sudo add-apt-repository ppa:gluster/glusterfs-3.8 -y
   - sudo apt-get update -q
   - sudo apt-get install glusterfs-common
+  - ssh-keygen -f $HOME/.ssh/id_rsa -t rsa -N ''
+  - cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+  - chmod 600 ~/.ssh/authorized_keys
+  - sudo pip install ceph-deploy
+  - ceph-deploy install --release jewel `hostname`
+  - ceph-deploy pkg --install librados-dev `hostname`
 addons:
   apt:
     packages:
       - liblzma-dev
-      - librados-dev
 script:
   - cargo build --features "ceph gluster" --verbose
   - cargo test --verbose
