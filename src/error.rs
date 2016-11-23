@@ -27,7 +27,10 @@ pub enum Error {
     CorruptBlock,
     ArchiveNameConflict,
     Acd(AcdError),
+    #[cfg(feature = "ceph")]
     RadosError(::ceph_rust::ceph::RadosError),
+    #[cfg(feature = "gluster")]
+    GlusterError(::gfapi_sys::gluster::GlusterError),
     BlockNotFound,
     ArchiveNotFound,
     InvalidArchiveName,
@@ -59,7 +62,10 @@ impl StdError for Error {
             }
             CorruptBlock => "The encrypted block is corrupted",
             Acd(_) => "There was a problem communicating with Amazon Cloud Drive",
-            RadosError(_) => "There was a problem communicating with Ceph",
+            #[cfg(feature = "ceph")]
+            RadosError(ref e) => e.description(),
+            #[cfg(feature = "gluster")]
+            GlusterError(ref e) => e.description(),
             BlockNotFound => "The specified block was not found",
             ArchiveNotFound => "The specified archive was not found",
             InvalidArchiveName => {
@@ -87,6 +93,9 @@ impl StdError for Error {
             CorruptArchiveBadJson => None,
             CorruptBlock => None,
             Acd(ref error) => Some(error),
+            #[cfg(feature = "gluster")]
+            GlusterError(ref error) => Some(error),
+            #[cfg(feature = "ceph")]
             RadosError(ref error) => Some(error),
             ArchiveNameConflict => None,
             BlockNotFound => None,
@@ -116,8 +125,16 @@ impl From<AcdError> for Error {
     }
 }
 
+#[cfg(feature = "ceph")]
 impl From<::ceph_rust::ceph::RadosError> for Error {
     fn from(err: ::ceph_rust::ceph::RadosError) -> Error {
         RadosError(err)
+    }
+}
+
+#[cfg(feature = "gluster")]
+impl From<::gfapi_sys::gluster::GlusterError> for Error {
+    fn from(err: ::gfapi_sys::gluster::GlusterError) -> Error {
+        GlusterError(err)
     }
 }

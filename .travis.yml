@@ -1,12 +1,18 @@
 language: rust
-sudo: false
+dist: trusty
+sudo: required
 rust:
   - stable
   - beta
+before_install:
+  - sudo add-apt-repository ppa:gluster/glusterfs-3.8 -y
+  - sudo apt-get update -q
+  - sudo apt-get install glusterfs-common
 addons:
   apt:
     packages:
       - liblzma-dev
+      - librados-dev
 script:
-  - cargo build --verbose
+  - cargo build --features "ceph gluster" --verbose
   - cargo test --verbose

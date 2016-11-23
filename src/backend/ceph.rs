@@ -1,13 +1,14 @@
-use std::path::Path;
+use std::fs::File;
+use std::io::Read;
 use std::str::FromStr;
 use backend::Backend;
 use ceph_rust::rados::{rados_t, rados_ioctx_t};
 use ceph_rust::ceph::{get_rados_ioctx, connect_to_ceph, Pool, rados_object_stat,
                       destroy_rados_ioctx, disconnect_from_ceph, rados_object_read,
                       rados_list_pool_objects, rados_object_write_full};
-
 use error::*;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
+use rustc_serialize::json;
 
 /// Backup to a Ceph cluster
 pub struct CephBackend {
@@ -19,15 +20,34 @@ pub struct CephBackend {
     metadata_pool: String,
 }
 
+#[derive(RustcDecodable)]
+struct CephConfig {
+    /// The location of the ceph.conf file
+    config_file: String,
+    /// The cephx user to connect to the Ceph service with
+    user_id: String,
+    /// Where to store the data
+    data_pool: String,
+    /// Where to store the metadata
+    metadata_pool: String,
+}
+
 impl CephBackend {
-    pub fn new<P: AsRef<Path>>(ceph_conf: P) -> Result<CephBackend> {
-        let cluster_handle = try!(connect_to_ceph("admin", &ceph_conf.as_ref().to_string_lossy()));
-        let ioctx = try!(get_rados_ioctx(cluster_handle, &String::from("data")));
+    pub fn new() -> Result<CephBackend> {
+        let ceph_config: CephConfig = {
+            let mut f = try!(File::open(".config/ceph.json"));
+            let mut s = String::new();
+            try!(f.read_to_string(&mut s));
+            try!(json::decode(&s))
+        };
+
+        let cluster_handle = try!(connect_to_ceph(&ceph_config.user_id, &ceph_config.config_file));
+        let ioctx = try!(get_rados_ioctx(cluster_handle, &ceph_config.data_pool));
         Ok(CephBackend {
             cluster_handle: cluster_handle,
             ioctx: ioctx,
-            data_pool: String::from("data"),
-            metadata_pool: String::from("metadata"),
+            data_pool: ceph_config.data_pool,
+            metadata_pool: ceph_config.metadata_pool,
         })
     }
 }

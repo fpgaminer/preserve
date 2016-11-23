@@ -1,36 +1,61 @@
 # Preserve [![Build Status](https://travis-ci.org/fpgaminer/preserve.svg?branch=master)](https://travis-ci.org/fpgaminer/preserve) #
 Preserve is an encrypted backup system written in Rust.  All backup data is encrypted, so backups can be stored on untrusted devices/services without exposing any of your data.  Backups are simple, operating very similar to creating an archive like Zip or Tar.  Deduplication makes this space efficient.
 
-## Status
-I am actively developing this project, so it is not stable or ready for general use.  The code is currently messy and missing many vital features.  Follow along if you're interested!
-
 ## Usage
 
 1. Generate a keyfile
 
    ```
-   preserve keygen --keyfile keyfile
+   preserve keygen --keyfile > keyfile
    ```
 
     Make sure to store this keyfile in a safe place.  Anyone who has access to this keyfile can read your backups and/or corrupt them.
+2. Configure your backend.
 
-2. Create a backup
+  Ceph is supported as a backend. Use `--backend ceph`. The ceph backend uses the
+`.config/ceph.json` file to configure it. Fields for this file are:
+```
+{
+ "config_file": "/etc/ceph/ceph.conf",
+ "user_id": "admin",
+ "data_pool": "data",
+ "metadata_pool": "metadata"
+}
+```
+The Ceph backend requires librados to be installed on your system. For Ubuntu that
+package is called `librados-dev`
+
+  Gluster is supported as a backend. Use `--backend gluster`. The gluster backend uses the
+`.config/gluster.json` file to configure it.
+```
+{
+    "server": "192.168.1.2",
+    "port": 24007,
+    "volume_name": "test"
+}
+```
+The Gluster backend requires libgfapi to be installed on your system.  For Ubuntu
+that package is called `glusterfs-common`
+Other backends include file and ACD ( Amazon Cloud Drive).
+
+  Amazon Cloud Drive is supported as a backend using `--backend acd`.  Setup instructions for ACD are forthcoming.
+
+
+3. Create a backup
 
    ```
    preserve create --keyfile keyfile --backend file --backend-path /path/to/my/backups/ my-backup-`date +%Y-%m-%d_%H-%M-%S` /home/me/
    ```
 
-   This will create a backup of everything inside `/home/me/`, the backup will be called something like `my-backup-2016-02-25_11-56-51`, the backup will be stored in the filesystem at `/path/to/my/backups`.  To take advantage of deduplication you should store all your backups in the same place.  If you backup multiple machines, you could use an external drive or NAS.  If you use the same keyfile for all machines then Preserve will dedup across all machines.
+   This will create a backup of everything inside `/home/me/`, the backup will be called `my-backup-2016-02-25_11-56-51`, the backup will be stored in the filesystem at `/path/to/my/backups`.  To take advantage of deduplication you should store all your backups in the same place.  If you backup multiple machines, you could use an external drive or NAS.  If you use the same keyfile for all machines then Preserve will dedup across all machines.
 
-   Amazon Cloud Drive is also supported as a backend using `--backend acd`.  Setup instructions for ACD are forthcoming.
-
-3. List backups
+4. List backups
 
    ```
    preserve list --keyfile keyfile --backend file --backend-path /path/to/my/backups/
    ```
 
-3. Restore a backup
+5. Restore a backup
 
    ```
    preserve restore --keyfile keyfile --backend file --backend-path /path/to/my/backups/ name-of-backup-to-restore /path/to/restore/it/to/
@@ -39,9 +64,11 @@ I am actively developing this project, so it is not stable or ready for general 
    This will restore the backup named `name-of-backup-to-restore`, extracting its contents to `/path/to/restore/it/to/`
 
 ## Build
-```
-cargo build
-```
+The Ceph and Gluster backends are hidden behind config feature flags.  To enable
+them use cargo build with the `--features` flag and specify either one or both
+of the backends.
+`cargo build --features "ceph gluster"`. Make sure you have `librados-dev` and
+`glusterfs-common` installed or these backends will fail to link properly.
 
 ## Test
 ```

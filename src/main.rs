@@ -1,9 +1,12 @@
 // Debugging only
-// #![feature(alloc_system)]
-// extern crate alloc_system;
+#![feature(alloc_system)]
+extern crate alloc_system;
 
 extern crate acd;
+#[cfg(feature = "ceph")]
 extern crate ceph_rust;
+#[cfg(feature = "gluster")]
+extern crate gfapi_sys;
 #[macro_use]
 extern crate clap;
 extern crate crypto;

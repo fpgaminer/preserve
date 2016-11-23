@@ -1,17 +1,18 @@
-use keystore::{KeyStore, Secret};
-use std::fs;
-use std::io::{Read, BufReader};
-use block::BlockStore;
-use std::path::{Path, PathBuf};
-use std::os::unix::fs::MetadataExt;
-use rustc_serialize::hex::ToHex;
-use std::string::ToString;
-use backend::{self, Backend};
-use archive::{Archive, File};
 use std::collections::{HashSet, HashMap};
 use std::env;
+use std::fs;
+use std::io::{Read, BufReader};
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::string::ToString;
+
+use archive::{Archive, File};
+use backend::{self, Backend};
+use block::BlockStore;
 use clap::ArgMatches;
 use error::*;
+use keystore::{KeyStore, Secret};
+use rustc_serialize::hex::ToHex;
 
 
 pub fn execute(args: &ArgMatches) {

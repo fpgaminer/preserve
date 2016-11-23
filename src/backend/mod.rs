@@ -3,12 +3,18 @@ use error::*;
 use url::Url;
 
 pub mod acd;
+#[cfg(feature = "ceph")]
 pub mod ceph;
 pub mod file;
+#[cfg(feature = "gluster")]
+pub mod gluster;
 
-pub use backend::file::FileBackend;
 pub use backend::acd::AcdBackend;
+#[cfg(feature = "ceph")]
 pub use backend::ceph::CephBackend;
+pub use backend::file::FileBackend;
+#[cfg(feature = "gluster")]
+pub use backend::gluster::GlusterBackend;
 
 
 pub trait Backend {
@@ -33,8 +39,11 @@ pub fn backend_from_backend_path(path: &str) -> Result<Box<Backend>> {
 
     let backend: Box<Backend> = match url.scheme() {
         "acd" => Box::new(try!(AcdBackend::new())),
-        "ceph" => Box::new(try!(CephBackend::new(url.path()))),
+        #[cfg(feature = "ceph")]
+        "ceph" => Box::new(try!(CephBackend::new())),
         "file" => Box::new(FileBackend::new(url.path())),
+        #[cfg(feature = "gluster")]
+        "gluster" => Box::new(try!(GlusterBackend::new())),
         e => return Err(Error::BadBackendPath(format!("Unknown backend: {}", e))),
     };
 
