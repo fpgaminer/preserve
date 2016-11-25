@@ -10,13 +10,14 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 
 #[derive(Debug)]
 pub enum Error {
-    /// I/O error
-    Io(IoError),
-    /// Error from JSON decoder
-    JsonDecoder(JsonDecoderError),
+    ArchiveNameConflict,
+    ArchiveNameTooLong,
+    ArchiveNotFound,
+    Acd(AcdError),
+    BackendOnDifferentDevices,
     /// Bad Backend Path
     BadBackendPath(String),
-    ArchiveNameTooLong,
+    BlockNotFound,
     CorruptArchiveName,
     CorruptArchiveTruncated,
     CorruptArchiveBadHmac,
@@ -25,16 +26,18 @@ pub enum Error {
     CorruptArchiveBadJson,
     CorruptArchiveBadBlockSecret,
     CorruptBlock,
-    ArchiveNameConflict,
-    Acd(AcdError),
-    #[cfg(feature = "ceph")]
-    RadosError(::ceph_rust::ceph::RadosError),
+    FromUtf8Error(::std::string::FromUtf8Error),
+    /// I/O error
+    Io(IoError),
+    /// Error from JSON decoder
+    JsonDecoder(JsonDecoderError),
+    InvalidArchiveName,
     #[cfg(feature = "gluster")]
     GlusterError(::gfapi_sys::gluster::GlusterError),
-    BlockNotFound,
-    ArchiveNotFound,
-    InvalidArchiveName,
-    BackendOnDifferentDevices,
+    #[cfg(feature = "ceph")]
+    RadosError(::ceph_rust::ceph::RadosError),
+    #[cfg(feature = "vault")]
+    VaultError(::vault::Error),
 }
 
 impl fmt::Display for Error {
@@ -66,6 +69,8 @@ impl StdError for Error {
             RadosError(ref e) => e.description(),
             #[cfg(feature = "gluster")]
             GlusterError(ref e) => e.description(),
+            #[cfg(feature = "vault")]
+            VaultError(ref e) => e.description(),
             BlockNotFound => "The specified block was not found",
             ArchiveNotFound => "The specified archive was not found",
             InvalidArchiveName => {
@@ -76,6 +81,7 @@ impl StdError for Error {
             CorruptArchiveBadBlockSecret => {
                 "The archive is corrupted.  One of the block secrets could not be parsed"
             }
+            FromUtf8Error(ref e) => e.description(),
         }
     }
 
@@ -95,6 +101,8 @@ impl StdError for Error {
             Acd(ref error) => Some(error),
             #[cfg(feature = "gluster")]
             GlusterError(ref error) => Some(error),
+            #[cfg(feature = "vault")]
+            VaultError(ref error) => Some(error),
             #[cfg(feature = "ceph")]
             RadosError(ref error) => Some(error),
             ArchiveNameConflict => None,
@@ -103,6 +111,7 @@ impl StdError for Error {
             ArchiveNotFound => None,
             BackendOnDifferentDevices => None,
             CorruptArchiveBadBlockSecret => None,
+            FromUtf8Error(ref error) => Some(error),
         }
     }
 }
@@ -136,5 +145,18 @@ impl From<::ceph_rust::ceph::RadosError> for Error {
 impl From<::gfapi_sys::gluster::GlusterError> for Error {
     fn from(err: ::gfapi_sys::gluster::GlusterError) -> Error {
         GlusterError(err)
+    }
+}
+
+#[cfg(feature = "vault")]
+impl From<::vault::Error> for Error {
+    fn from(err: ::vault::Error) -> Error {
+        VaultError(err)
+    }
+}
+
+impl From<::std::string::FromUtf8Error> for Error {
+    fn from(err: ::std::string::FromUtf8Error) -> Error {
+        FromUtf8Error(err)
     }
 }

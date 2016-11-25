@@ -21,6 +21,8 @@ extern crate rand;
 extern crate tempdir;
 extern crate time;
 extern crate url;
+#[cfg(feature = "vault")]
+extern crate hashicorp_vault as vault;
 
 mod archive;
 mod backend;

@@ -3,13 +3,28 @@ Preserve is an encrypted backup system written in Rust.  All backup data is encr
 
 ## Usage
 
-1. Generate a keyfile
+1. Generate a keyfile without vault.
 
    ```
-   preserve keygen --keyfile > keyfile
+   preserve keygen --keyfile keyfile
    ```
 
-    Make sure to store this keyfile in a safe place.  Anyone who has access to this keyfile can read your backups and/or corrupt them.
+    Make sure to store this keyfile in a safe place.  Anyone who has access to this keyfile can read your backups and/or corrupt them. If you build
+    preserve with the `vault` feature you can store the key in hashicorp-vault. Preserve will then pull down the key as needed so it doesn't need to
+    be stored locally.
+
+    The vault key storage uses the `.config/vault.json` file to configure it. Fields for this file are:
+  ```
+  {
+   "host": "http://localhost:8200",
+   "token": "<token>",
+  }
+  ```
+
+    Generating a keyfile with vault:
+    ```
+    preserve keygen
+    ```
 2. Configure your backend.
 
   Ceph is supported as a backend. Use `--backend ceph`. The ceph backend uses the
@@ -69,6 +84,7 @@ them use cargo build with the `--features` flag and specify either one or both
 of the backends.
 `cargo build --features "ceph gluster"`. Make sure you have `librados-dev` and
 `glusterfs-common` installed or these backends will fail to link properly.
+The vault key storage requires the `--features "vault"` flag to be built.
 
 ## Test
 ```

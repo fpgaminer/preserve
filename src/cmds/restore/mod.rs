@@ -50,6 +50,16 @@ pub fn execute(args: &ArgMatches) {
         return;
     }
 
+    #[cfg(feature="vault")]
+    let keystore = match KeyStore::load_from_vault() {
+        Ok(keystore) => keystore,
+        Err(err) => {
+            error!("Unable to load keyfile: {}", err);
+            return;
+        }
+    };
+
+    #[cfg(not(feature="vault"))]
     let keystore = match KeyStore::load_from_path(args_keyfile) {
         Ok(keystore) => keystore,
         Err(err) => {

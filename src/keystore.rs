@@ -1,8 +1,10 @@
-use rustc_serialize::json;
-use rustc_serialize;
-use rand::{OsRng, Rng};
-use std::io::{self, BufReader};
-use rustc_serialize::hex::{ToHex, FromHex};
+use std::io::{self, BufReader, Read};
+use std::fs;
+#[cfg(feature="vault")]
+use std::fs::File;
+use std::path::Path;
+use std::str::FromStr;
+
 use crypto;
 use crypto::chacha20::ChaCha20;
 use crypto::hmac::Hmac;
@@ -10,11 +12,18 @@ use crypto::sha2::Sha256;
 use crypto::mac::{Mac, MacResult};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::curve25519;
-use rustc_serialize::base64::{self, ToBase64, FromBase64, FromBase64Error};
-use std::str::FromStr;
+
 use error::*;
-use std::path::Path;
-use std::fs;
+#[cfg(feature="vault")]
+use cmds::keygen::VaultConfig;
+
+use rand::{OsRng, Rng};
+use rustc_serialize;
+use rustc_serialize::json;
+use rustc_serialize::hex::{ToHex, FromHex};
+use rustc_serialize::base64::{self, ToBase64, FromBase64, FromBase64Error};
+#[cfg(feature="vault")]
+use vault::Client;
 
 
 new_type!{
@@ -133,6 +142,21 @@ impl KeyStore {
         try!(write!(writer, "{}", json::as_pretty_json(&self)));
         Ok(())
     }
+
+	#[cfg(feature="vault")]
+	pub fn load_from_vault() -> Result<KeyStore>{
+		let vault_config: VaultConfig = {
+	        let mut f = try!(File::open(".config/vault.json"));
+	        let mut s = String::new();
+	        try!(f.read_to_string(&mut s));
+	        try!(json::decode(&s))
+	    };
+	    let client = try!(Client::new(&vault_config.host, &vault_config.token));
+	    let secret_64 = try!(client.get_secret("backup_key"));
+		let decoded_64_vec = secret_64.from_base64().unwrap();
+		let decoded_64 = try!(String::from_utf8(decoded_64_vec));
+		Ok(try!(json::decode(&decoded_64)))
+	}
 
     pub fn load<R: io::Read>(reader: &mut R) -> Result<KeyStore> {
         let mut data = String::new();

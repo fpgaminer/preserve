@@ -12,6 +12,16 @@ pub fn execute(args: &ArgMatches) {
     let args_keyfile = args.value_of("keyfile").expect("internal error");
     let args_backend = args.value_of("backend").expect("internal error");
 
+    #[cfg(feature="vault")]
+    let keystore = match KeyStore::load_from_vault() {
+        Ok(keystore) => keystore,
+        Err(err) => {
+            error!("Unable to load keyfile: {}", err);
+            return;
+        }
+    };
+
+    #[cfg(not(feature="vault"))]
     let keystore = match KeyStore::load_from_path(args_keyfile) {
         Ok(keystore) => keystore,
         Err(err) => {
