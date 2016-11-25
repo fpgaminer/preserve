@@ -15,5 +15,5 @@ addons:
     packages:
       - liblzma-dev
 script:
-  - cargo build --features "ceph gluster" --verbose
+  - cargo build --features "ceph gluster vault" --verbose
   - cargo test --verbose
