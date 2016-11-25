@@ -4,6 +4,7 @@ use clap::ArgMatches;
 
 
 pub fn execute(args: &ArgMatches) {
+    #[cfg(not(feature="vault"))]
     let args_keyfile = args.value_of("keyfile").expect("internal error");
     let args_backend = args.value_of("backend").expect("internal error");
 

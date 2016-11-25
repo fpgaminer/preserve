@@ -34,7 +34,7 @@ mod logger;
 
 use logger::Logger;
 use log::LogLevelFilter;
-use clap::{App, AppSettings, SubCommand};
+use clap::{App, AppSettings, Arg, SubCommand};
 
 
 fn main() {
@@ -52,15 +52,28 @@ fn main() {
             .about("create a new backup")
             .setting(AppSettings::UnifiedHelpMessage)
             .setting(AppSettings::ColoredHelp)
-            .args_from_usage("--keyfile=<KEYFILE>  'Sets the keyfile to use'
-								 \
-                              --backend=<BACKEND>  'Sets the backend to use'
-								 \
-                              --dereference        'Follow symlinks'
-								 <NAME>               \
-                              'Unique name for this backup'
-								 <PATH>               'The \
-                              path to backup'"))
+            .arg(Arg::with_name("keyfile")
+                .help("Sets the keyfile to use")
+                .long("keyfile")
+                .takes_value(true)
+                .required(false))
+            .arg(Arg::with_name("backend")
+                .long("backend")
+                .help("Sets the backend to use")
+                .takes_value(true)
+                .required(true))
+            .arg(Arg::with_name("dereference")
+                .long("dereference")
+                .help("Follow symlinks")
+                .required(false))
+            .arg(Arg::with_name("NAME")
+                .help("Unique name for this backup")
+                .takes_value(true)
+                .required(true))
+            .arg(Arg::with_name("PATH")
+                .help("Path to backup")
+                .takes_value(true)
+                .required(true)))
         .subcommand(SubCommand::with_name("keygen")
             .about("create a new keyfile")
             .setting(AppSettings::UnifiedHelpMessage)
@@ -70,35 +83,65 @@ fn main() {
             .about("list existing backups")
             .setting(AppSettings::UnifiedHelpMessage)
             .setting(AppSettings::ColoredHelp)
-            .args_from_usage("--keyfile=<KEYFILE>  'Sets the keyfile to use'
-								 \
-                              --backend=<BACKEND>  'Sets the backend to use'"))
+            .arg(Arg::with_name("keyfile")
+                .help("Sets the keyfile to use")
+                .long("keyfile")
+                .takes_value(true)
+                .required(false))
+            .arg(Arg::with_name("backend")
+                .long("backend")
+                .help("Sets the backend to use")
+                .takes_value(true)
+                .required(true)))
         .subcommand(SubCommand::with_name("restore")
             .about("restore an existing backup")
             .setting(AppSettings::UnifiedHelpMessage)
             .setting(AppSettings::ColoredHelp)
-            .args_from_usage("--keyfile=<KEYFILE>  'Sets the keyfile to use'
-								 \
-                              --backend=<BACKEND>  'Sets the backend to use'
-								 \
-                              --hard-dereference   'Dereference hardlinks'
-								 \
-                              --debug-decrypt      'Just fetch and decrypt the archive; no \
-                              decompression, parsing, or extraction'
-								 <NAME>               \
-                              'Name of the backup to restore'
-								 [PATH]               \
-                              'Where to extract the backup to'"))
+            .arg(Arg::with_name("keyfile")
+                .help("Sets the keyfile to use")
+                .long("keyfile")
+                .takes_value(true)
+                .required(false))
+            .arg(Arg::with_name("backend")
+                .long("backend")
+                .help("Sets the backend to use")
+                .takes_value(true)
+                .required(true))
+            .arg(Arg::with_name("hard-dereference")
+                .long("hard-dereference")
+                .help("Dereference symlinks")
+                .required(false))
+            .arg(Arg::with_name("debug-decrypt")
+                .long("debug-decrypt")
+                .required(false)
+                .help("Fetch and decrypt the archive; no decompression, parsing or extraction"))
+            .arg(Arg::with_name("NAME")
+                .help("Name of the backup to retore")
+                .takes_value(true)
+                .required(true))
+            .arg(Arg::with_name("PATH")
+                .help("Where to backup extract the backup to")
+                .takes_value(true)
+                .required(true)))
         .subcommand(SubCommand::with_name("verify")
             .about("verify the integrity of an existing backup and all encrypted blocks it \
                     references")
             .setting(AppSettings::UnifiedHelpMessage)
             .setting(AppSettings::ColoredHelp)
-            .args_from_usage("--keyfile=<KEYFILE>  'Sets the keyfile to use'
-								 \
-                              --backend=<BACKEND>  'Sets the backend to use'
-								 <NAME>               \
-                              'The name of the backup to verify'"))
+            .arg(Arg::with_name("keyfile")
+                .help("Sets the keyfile to use")
+                .long("keyfile")
+                .takes_value(true)
+                .required(false))
+            .arg(Arg::with_name("backend")
+                .long("backend")
+                .help("Sets the backend to use")
+                .takes_value(true)
+                .required(true))
+            .arg(Arg::with_name("NAME")
+                .help("The name of the backup to verify")
+                .takes_value(true)
+                .required(true)))
         .get_matches();
 
     Logger::init(LogLevelFilter::Info, matches.value_of("logfile"));

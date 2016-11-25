@@ -17,6 +17,7 @@ use rustc_serialize::hex::ToHex;
 
 pub fn execute(args: &ArgMatches) {
     let mut config = Config::default();
+    #[cfg(not(feature="vault"))]
     let args_keyfile = args.value_of("keyfile").expect("internal error");
     let args_backend = args.value_of("backend").expect("internal error");
     let backup_name = args.value_of("NAME").expect("internal error");
