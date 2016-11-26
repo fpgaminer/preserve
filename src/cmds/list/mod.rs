@@ -1,6 +1,7 @@
-use keystore::KeyStore;
 use backend;
 use clap::ArgMatches;
+use json;
+use keystore::KeyStore;
 
 
 pub fn execute(args: &ArgMatches) {
@@ -40,8 +41,7 @@ pub fn execute(args: &ArgMatches) {
             return;
         }
     };
-
-    // TODO: Push into a vec, sort alphabetically, and then print
+    let mut archive_names = Vec::new();
     for encrypted_archive_name in &encrypted_archive_names {
         let archive_name = match keystore.decrypt_archive_name(encrypted_archive_name) {
             Ok(name) => name,
@@ -52,8 +52,15 @@ pub fn execute(args: &ArgMatches) {
                 continue;
             }
         };
+        archive_names.push(archive_name);
+    }
+    // Sort alphabetically
+    archive_names.sort();
 
-        println!("{}", archive_name);
+    if args.is_present("json") {
+        println!("{}", json::stringify(archive_names));
+    } else {
+        println!("{}", archive_names.join("\n"))
     }
 
     if encrypted_archive_names.is_empty() {

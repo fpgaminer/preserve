@@ -5,24 +5,26 @@
 extern crate acd;
 #[cfg(feature = "ceph")]
 extern crate ceph_rust;
-#[cfg(feature = "gluster")]
-extern crate gfapi_sys;
 #[macro_use]
 extern crate clap;
 extern crate crypto;
+#[cfg(feature = "gluster")]
+extern crate gfapi_sys;
+#[cfg(feature = "vault")]
+extern crate hashicorp_vault as vault;
+#[macro_use]
+extern crate json;
 extern crate libc;
 #[macro_use]
 extern crate log;
 extern crate lzma;
 #[macro_use]
 pub mod newtype_macros;
-extern crate rustc_serialize;
 extern crate rand;
+extern crate rustc_serialize;
 extern crate tempdir;
 extern crate time;
 extern crate url;
-#[cfg(feature = "vault")]
-extern crate hashicorp_vault as vault;
 
 mod archive;
 mod backend;
@@ -32,9 +34,9 @@ mod error;
 mod keystore;
 mod logger;
 
+use clap::{App, AppSettings, Arg, SubCommand};
 use logger::Logger;
 use log::LogLevelFilter;
-use clap::{App, AppSettings, Arg, SubCommand};
 
 
 fn main() {
@@ -92,7 +94,11 @@ fn main() {
                 .long("backend")
                 .help("Sets the backend to use")
                 .takes_value(true)
-                .required(true)))
+                .required(true))
+            .arg(Arg::with_name("json")
+                .long("json")
+                .help("Format the output as json")
+                .required(false)))
         .subcommand(SubCommand::with_name("restore")
             .about("restore an existing backup")
             .setting(AppSettings::UnifiedHelpMessage)
