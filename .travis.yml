@@ -1,6 +1,14 @@
 language: rust
 dist: trusty
 sudo: required
+env:
+  - FEATURES="ceph"
+  - FEATURES="gluster"
+  - FEATURES="vault"
+  - FEATURES="ceph gluster"
+  - FEATURES="ceph vault"
+  - FEATURES="gluster vault"
+  - FEATURES="ceph gluster vault"
 rust:
   - stable
   - beta
@@ -15,5 +23,5 @@ addons:
     packages:
       - liblzma-dev
 script:
-  - cargo build --features "ceph gluster vault" --verbose
-  - cargo test --verbose
+  - cargo build --features $FEATURES --verbose
+  - cargo test --features=$FEATURES --verbose
