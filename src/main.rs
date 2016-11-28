@@ -22,6 +22,7 @@ extern crate lzma;
 pub mod newtype_macros;
 extern crate rand;
 extern crate rustc_serialize;
+extern crate rusqlite;
 extern crate tempdir;
 extern crate time;
 extern crate url;

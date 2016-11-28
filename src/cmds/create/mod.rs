@@ -12,7 +12,8 @@ use block::BlockStore;
 use clap::ArgMatches;
 use error::*;
 use keystore::{KeyStore, Secret};
-use rustc_serialize::hex::ToHex;
+use rusqlite;
+use rustc_serialize::hex::{ToHex, FromHex};
 
 
 pub fn execute(args: &ArgMatches) {
@@ -80,6 +81,10 @@ pub fn execute(args: &ArgMatches) {
         info!("Reading files...");
         match builder.read_files() {
             Ok(_) => (),
+            Err(Error::Sqlite(err)) => {
+                error!("There was a problem accessing the cache database: {}", err);
+                return;
+            }
             Err(err) => {
                 error!("There was a problem while reading the files: {}", err);
                 return;
@@ -189,7 +194,29 @@ impl<'a> ArchiveBuilder<'a> {
             block_store: block_store,
         })
     }
+    fn open_cache_db(&self) -> Result<rusqlite::Connection> {
+        let db = try!(rusqlite::Connection::open("cache.sqlite"));
 
+        try!(db.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
+			path TEXT NOT NULL,
+			\
+                         mtime INTEGER NOT NULL,
+			mtime_nsec INTEGER NOT NULL,
+			size \
+                         INTEGER NOT NULL,
+			blocks TEXT NOT NULL
+		)",
+                        &[]));
+
+        try!(db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache \
+                      (path, mtime, mtime_nsec, size);",
+                     &[]));
+        try!(db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache \
+                         (path);",
+                        &[]));
+
+        Ok(db)
+    }
     // Walk the file tree from self.base_path, gathering metadata about all the files
     fn walk(&mut self) -> Result<()> {
         self.files = Vec::new();
@@ -527,6 +554,7 @@ impl<'a> ArchiveBuilder<'a> {
 
     fn read_files(&mut self) -> Result<()> {
         let mut progress = 0;
+        let cache_db = try!(self.open_cache_db());
 
         for file in &mut self.files {
             if file.file.is_dir || file.file.symlink.is_some() {
@@ -536,6 +564,7 @@ impl<'a> ArchiveBuilder<'a> {
             info!("Reading file: {}", file.file.path);
             match try!(read_file(file,
                                  &self.base_path,
+                                 &cache_db,
                                  self.block_store,
                                  self.backend,
                                  progress,
@@ -561,6 +590,7 @@ impl<'a> ArchiveBuilder<'a> {
 
 fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile,
                              base_path: P,
+                             cache_db: &rusqlite::Connection,
                              block_store: &BlockStore,
                              backend: &mut Backend,
                              progress: u64,
@@ -575,7 +605,68 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile,
             return Ok(None);
         }
     };
+    let canonical_path_str = match canonical_path.to_str() {
+        Some(path) => path,
+        None => {
+            warn!("Unable to canonicalize path for '{}'.  It is not a UTF-8 string.  It will not \
+                   be included in the archive.",
+                  path.display());
+            return Ok(None);
+        }
+    };
+    // Check to see if we have this file in the cache
+    let result = cache_db.query_row(
+        "SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?",
+    &[&canonical_path_str.to_owned(), &file.file.mtime,
+    &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
+		row.get(0)
+	});
 
+    match result {
+        Ok(blocks_str) => {
+            // The file is cached, but are all the blocks available in the current block store?
+            let mut need_reread = false;
+            let blocks_str: String = blocks_str;
+            let mut blocks = Vec::new();
+
+            if !blocks_str.is_empty() {
+                for block in blocks_str.split('\n') {
+                    let block_hex = match block.from_hex() {
+                        Ok(x) => x,
+                        Err(_) => {
+                            warn!("A bad block secret was found in the cache database.
+                            \
+                                   The cache database might be corrupted.");
+                            need_reread = true;
+                            break;
+                        }
+                    };
+                    let secret = match Secret::from_slice(&block_hex) {
+                        Some(x) => x,
+                        None => {
+                            warn!("A bad block secret was found in the cache database.
+                            \
+                                   The cache database might be corrupted.");
+                            need_reread = true;
+                            break;
+                        }
+                    };
+                    if !try!(block_store.block_exists(&secret, backend)) {
+                        need_reread = true;
+                        break;
+                    }
+                    blocks.push(block.to_owned());
+                }
+            }
+
+            if !need_reread {
+                debug!("Found in mtime cache.");
+                return Ok(Some(blocks));
+            }
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => (),
+        Err(err) => return Err(err.into()),
+    };
     // Not cached or missing blocks, so let's actually read the file
     let mut retries = 0;
     loop {
@@ -629,6 +720,14 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile,
                 continue;
             }
         };
+        let blocks_str = blocks.join("\n");
+        try!(cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, \
+                      blocks) VALUES (?,?,?,?,?)",
+                     &[&canonical_path_str.to_owned(),
+                       &file.file.mtime,
+                       &file.file.mtime_nsec,
+                       &(file.file.size as i64),
+                       &blocks_str]));
 
         return Ok(Some(blocks));
     }
