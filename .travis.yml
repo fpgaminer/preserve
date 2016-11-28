@@ -14,6 +14,7 @@ addons:
   apt:
     packages:
       - liblzma-dev
+      - unzip
 script:
   - cargo build --features "ceph gluster vault" --verbose
   - cargo test --features "ceph gluster vault" --verbose
