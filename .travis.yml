@@ -23,5 +23,5 @@ addons:
     packages:
       - liblzma-dev
 script:
-  - cargo build --features $FEATURES --verbose
+  - cargo build --features$FEATURES --verbose
   - cargo test --features=$FEATURES --verbose
