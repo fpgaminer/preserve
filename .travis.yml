@@ -1,6 +1,23 @@
 language: rust
 dist: trusty
 sudo: required
+rust:
+  - stable
+  - beta
+  - nightly
+matrix:
+  allow_failures:
+  - rust: nightly
+  - rust: beta
+  fast_finish: true
+  exclude:
+    - rust: nightly
+    - rust: beta
+  include:
+    - rust: nightly
+      env: FEATURES="ceph gluster vault"
+    - rust: beta
+      env: FEATURES="ceph gluster vault"
 env:
   - FEATURES="ceph"
   - FEATURES="gluster"
@@ -9,9 +26,6 @@ env:
   - FEATURES="ceph vault"
   - FEATURES="gluster vault"
   - FEATURES="ceph gluster vault"
-rust:
-  - stable
-  - beta
 before_install:
   - sudo add-apt-repository ppa:gluster/glusterfs-3.8 -y
   - sudo add-apt-repository cloud-archive:mitaka -y
