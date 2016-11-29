@@ -16,13 +16,20 @@ before_install:
   - sudo add-apt-repository ppa:gluster/glusterfs-3.8 -y
   - sudo add-apt-repository cloud-archive:mitaka -y
   - sudo apt-get update -q
-  - sudo apt-get install glusterfs-common
-  - sudo apt-get install librados-dev
+  - sudo apt-get install glusterfs-common librados-dev ceph
+install:
+  - bin/install-vault.sh
+  - bin/install-gluster.sh
+  - sudo bin/install-ceph.sh
+  - export PATH=$HOME/bin:$PATH
+  - vault server -dev > /dev/null 2>&1 &
 addons:
   apt:
     packages:
       - liblzma-dev
       - unzip
+before_script:
+  - VAULT_ADDR=http://127.0.0.1:8200 vault token-create -id="test12345" -ttl="720h"
 script:
   - cargo build --features$FEATURES --verbose
   - cargo test --features=$FEATURES --verbose
