@@ -44,7 +44,12 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(self.description())
+        match *self {
+            #[cfg(feature="vault")]
+            VaultError(ref e) => write!(f, "{}", e),
+            _ => f.write_str(self.description()),
+        }
+
     }
 }
 

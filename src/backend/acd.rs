@@ -1,3 +1,5 @@
+use std::env::home_dir;
+
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use backend::Backend;
 use acd;
@@ -22,7 +24,9 @@ impl AcdBackend {
         }
 
         let security_profile: SecurityProfile = {
-            let mut f = try!(File::open(".config/acd.security_profile.json"));
+            let mut f = try!(File::open(format!("{}/{}",
+                                                home_dir().unwrap().to_string_lossy(),
+                                                ".config/acd.security_profile.json")));
             let mut s = String::new();
             try!(f.read_to_string(&mut s));
             try!(json::decode(&s))

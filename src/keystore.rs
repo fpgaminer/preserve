@@ -1,3 +1,4 @@
+use std::env::home_dir;
 use std::io::{self, BufReader, Read};
 use std::fs;
 #[cfg(feature="vault")]
@@ -139,24 +140,30 @@ impl KeyStore {
     }
 
     pub fn save<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-        try!(write!(writer, "{}", json::as_pretty_json(&self)));
+        try!(write!(writer, "{}", self.as_pretty_json()));
         Ok(())
     }
 
-	#[cfg(feature="vault")]
-	pub fn load_from_vault() -> Result<KeyStore>{
-		let vault_config: VaultConfig = {
-	        let mut f = try!(File::open(".config/vault.json"));
-	        let mut s = String::new();
-	        try!(f.read_to_string(&mut s));
-	        try!(json::decode(&s))
-	    };
-	    let client = try!(Client::new(&vault_config.host, &vault_config.token));
-	    let secret_64 = try!(client.get_secret("backup_key"));
-		let decoded_64_vec = secret_64.from_base64().unwrap();
-		let decoded_64 = try!(String::from_utf8(decoded_64_vec));
-		Ok(try!(json::decode(&decoded_64)))
-	}
+    pub fn as_pretty_json(&self) -> String {
+        format!("{}", json::as_pretty_json(&self))
+    }
+
+    #[cfg(feature="vault")]
+    pub fn load_from_vault() -> Result<KeyStore> {
+        let vault_config: VaultConfig = {
+            let mut f = try!(File::open(format!("{}/{}",
+                                                home_dir().unwrap().to_string_lossy(),
+                                                ".config/vault.json")));
+            let mut s = String::new();
+            try!(f.read_to_string(&mut s));
+            try!(json::decode(&s))
+        };
+        let client = try!(Client::new(&vault_config.host, &vault_config.token));
+        let secret_64 = try!(client.get_secret("backup_key"));
+        let decoded_64_vec = secret_64.from_base64().unwrap();
+        let decoded_64 = try!(String::from_utf8(decoded_64_vec));
+        Ok(try!(json::decode(&decoded_64)))
+    }
 
     pub fn load<R: io::Read>(reader: &mut R) -> Result<KeyStore> {
         let mut data = String::new();
@@ -537,8 +544,8 @@ dd0cf16e9a8d102ec9cd962e51ad591bd59bbbc5b8ff47cedbdb42c29a4d6061e5bf8"
         let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
         let name = "(╯°□°）╯︵ ┻━┻";
         let expected = format!("{}{}",
-		"YuDnnmapCAOdv9RfpB77aVAln9NWgK9maOkpO4omqQvc9Dnng26-IH_qz",
-		"iHcxAMofqG1uGfMt2_Z4LkQdO_zXcmRn_6NY0FS3U_uSAGmudueq_r5H37QDYXQJIcV_A==");
+                               "YuDnnmapCAOdv9RfpB77aVAln9NWgK9maOkpO4omqQvc9Dnng26-IH_qz",
+                               "iHcxAMofqG1uGfMt2_Z4LkQdO_zXcmRn_6NY0FS3U_uSAGmudueq_r5H37QDYXQJIcV_A==");
         let output = keystore.encrypt_archive_name(name).unwrap().to_string();
 
         assert_eq!(output, expected);

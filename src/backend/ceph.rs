@@ -1,3 +1,4 @@
+use std::env::home_dir;
 use std::fs::File;
 use std::io::Read;
 use std::str::FromStr;
@@ -35,7 +36,9 @@ struct CephConfig {
 impl CephBackend {
     pub fn new() -> Result<CephBackend> {
         let ceph_config: CephConfig = {
-            let mut f = try!(File::open(".config/ceph.json"));
+            let mut f = try!(File::open(format!("{}/{}",
+                                                home_dir().unwrap().to_string_lossy(),
+                                                ".config/ceph.json")));
             let mut s = String::new();
             try!(f.read_to_string(&mut s));
             try!(json::decode(&s))

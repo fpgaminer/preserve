@@ -1,3 +1,4 @@
+use std::env::home_dir;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
 
@@ -21,16 +22,36 @@ pub struct VaultConfig {
 }
 
 #[cfg(feature="vault")]
-fn save_keys_to_vault(buffer: &Vec<u8>) -> Result<()> {
+fn save_keys_to_vault(buffer: &str) -> Result<()> {
     let vault_config: VaultConfig = {
-        let mut f = try!(File::open(".config/vault.json"));
+        let mut f = try!(File::open(format!("{}/{}",
+                                            home_dir().unwrap().to_string_lossy(),
+                                            ".config/vault.json")));
         let mut s = String::new();
         try!(f.read_to_string(&mut s));
         try!(json::decode(&s))
     };
     let client = try!(Client::new(&vault_config.host, &vault_config.token));
-    try!(client.set_secret("backup_key", &buffer.to_base64(STANDARD)));
+    let encoded = buffer.as_bytes().to_base64(STANDARD);
+    let res = try!(client.set_secret("backup_key", &encoded));
     Ok(())
+}
+
+#[cfg(feature="vault")]
+#[test]
+fn test_save_keys_to_vault() {
+    save_keys_to_vault("123").unwrap();
+    let vault_config: VaultConfig = {
+        let mut f = File::open(format!("{}/{}",
+                                       home_dir().unwrap().to_string_lossy(),
+                                       ".config/vault.json"))
+            .unwrap();
+        let mut s = String::new();
+        f.read_to_string(&mut s).unwrap();
+        json::decode(&s).unwrap()
+    };
+    let client = Client::new(&vault_config.host, &vault_config.token).unwrap();
+    client.delete_secret("backup_key").unwrap()
 }
 
 pub fn execute(args: &ArgMatches) {
@@ -65,12 +86,13 @@ pub fn execute(args: &ArgMatches) {
     // Create a new keystore
     let keystore = KeyStore::new();
 
+    #[cfg(feature="vault")]
+    save_keys_to_vault(&keystore.as_pretty_json());
+
     // Save the keystore to the destination (file/stdout)
+    #[cfg(not(feature="vault"))]
     match keystore.save(&mut writer) {
-        Ok(_) => {
-            #[cfg(feature="vault")]
-            save_keys_to_vault(&writer.get_ref());
-        }
+        Ok(_) => {}
         Err(err) => {
             error!("Could not write to keyfile: {}", err);
             return;
