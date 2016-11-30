@@ -1,16 +1,19 @@
-extern crate tempdir;
-extern crate rand;
 extern crate libc;
+extern crate rand;
+extern crate rustc_serialize;
+extern crate tempdir;
 
-use std::process::Command;
+use std::cmp;
 use std::fs::{self, File};
-use std::path::{Path, PathBuf};
 use std::io::{Write, BufWriter};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+use std::os::unix;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
 use tempdir::TempDir;
 use rand::{Rng, ChaChaRng};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-use std::cmp;
-use std::os::unix;
+use rustc_serialize::json;
 
 
 #[test]
@@ -41,6 +44,8 @@ fn integration_test_1() {
     // First test
     {
         test_config.create("test1", original_dir.path());
+        let output = test_config.list();
+        assert_eq!(vec!["test1".to_string()], output);
         let restore_dir = test_config.restore("test1");
         match compare_dirs(original_dir.path(), restore_dir.path()) {
             Ok(_) => (),
@@ -62,6 +67,8 @@ fn integration_test_1() {
     // Test again
     {
         test_config.create("test2", original_dir.path());
+        let output = test_config.list();
+        assert_eq!(vec!["test1".to_string(), "test2".to_string()], output);
         let restore_dir = test_config.restore("test2");
         match compare_dirs(original_dir.path(), restore_dir.path()) {
             Ok(_) => (),
@@ -84,6 +91,9 @@ fn integration_test_1() {
     // Test again
     {
         test_config.create("test3", original_dir.path());
+        let output = test_config.list();
+        assert_eq!(vec!["test1".to_string(), "test2".to_string(), "test3".to_string()],
+                   output);
         let restore_dir = test_config.restore("test3");
         match compare_dirs(original_dir.path(), restore_dir.path()) {
             Ok(_) => (),
@@ -160,6 +170,25 @@ impl TestConfig {
             .arg("keyfile")
             .output()
             .unwrap();
+    }
+
+    pub fn list(&self) -> Vec<String> {
+        let output = Command::new(&self.bin)
+            .current_dir(&self.working_dir)
+            .arg("--logfile=trace")
+            .arg("list")
+            .arg("--keyfile")
+            .arg("keyfile")
+            .arg("--backend")
+            .arg(&self.backend)
+            .arg("--json")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        println!("create-stdout: {}", stdout);
+        println!("create-stderr: {}", String::from_utf8_lossy(&output.stderr));
+        let backup_list: Vec<String> = json::decode(&stdout).unwrap();
+        backup_list
     }
 
     pub fn create<P: AsRef<Path>>(&self, backup_name: &str, path: P) {
