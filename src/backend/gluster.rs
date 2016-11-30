@@ -6,7 +6,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use self::gfapi_sys::gluster::Gluster;
+use self::gfapi_sys::gluster::{Gluster, GlusterDirectory};
 
 use backend::Backend;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
@@ -142,16 +142,21 @@ impl Backend for GlusterBackend {
     fn list_archives(&mut self) -> Result<Vec<EncryptedArchiveName>> {
         let mut archives = Vec::new();
 
-        for entry in try!(fs::read_dir(PathBuf::from("/archives"))) {
-            let entry = try!(entry);
-            let filename = entry.file_name();
-            let filename_str = try!(filename.to_str().ok_or(Error::InvalidArchiveName));
-            let encrypted_archive_name = try!(EncryptedArchiveName::from_str(filename_str)
-                .map_err(|_| Error::InvalidArchiveName));
-
-            archives.push(encrypted_archive_name);
+        let archive_dir =
+            GlusterDirectory { dir_handle: try!(self.gluster.opendir(Path::new("/archives"))) };
+        let dot = Path::new(".");
+        let dot_dot = Path::new("..");
+        for entry in archive_dir {
+            if entry.path == dot || entry.path == dot_dot {
+                continue;
+            }
+            // If we can't turn the filename into a string skip it
+            if let Some(filename) = entry.path.to_str() {
+                let encrypted_archive_name = try!(EncryptedArchiveName::from_str(filename)
+                    .map_err(|_| Error::InvalidArchiveName));
+                archives.push(encrypted_archive_name);
+            }
         }
-
         Ok(archives)
     }
 }
