@@ -35,6 +35,9 @@ struct CephConfig {
 
 impl CephBackend {
     pub fn new() -> Result<CephBackend> {
+        info!("Reading ceph config file: {}/{}",
+              home_dir().unwrap().to_string_lossy(),
+              ".config/ceph.json");
         let ceph_config: CephConfig = {
             let mut f = try!(File::open(format!("{}/{}",
                                                 home_dir().unwrap().to_string_lossy(),
@@ -43,8 +46,9 @@ impl CephBackend {
             try!(f.read_to_string(&mut s));
             try!(json::decode(&s))
         };
-
+        info!("Connecting to Ceph");
         let cluster_handle = try!(connect_to_ceph(&ceph_config.user_id, &ceph_config.config_file));
+        info!("Getting rados ioctx");
         let ioctx = try!(get_rados_ioctx(cluster_handle, &ceph_config.data_pool));
         Ok(CephBackend {
             cluster_handle: cluster_handle,

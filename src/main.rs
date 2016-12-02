@@ -37,8 +37,9 @@ mod logger;
 
 use clap::{App, AppSettings, Arg, SubCommand};
 use logger::Logger;
-use log::LogLevelFilter;
+use log::{LogLevel, LogLevelFilter};
 
+use std::str::FromStr;
 
 fn main() {
     let matches = App::new("preserve")
@@ -48,9 +49,22 @@ fn main() {
         .setting(AppSettings::VersionlessSubcommands)
         .setting(AppSettings::UnifiedHelpMessage)
         .setting(AppSettings::ColoredHelp)
-        .args_from_usage("--logfile=[LOGFILE]  'Sets a file to write a log to'
-							 --verbose            \
-                          'Be verbose'")
+        .arg(Arg::with_name("logfile")
+            .help("Sets the file to write the logs to")
+            .long("logfile")
+            .takes_value(true)
+            .required(false))
+        .arg(Arg::with_name("loglevel")
+            .help("Sets the level to write the logs at")
+            .long("loglevel")
+            .takes_value(true)
+            .possible_values(&["off", "error", "warn", "info", "debug", "trace"])
+            .required(false))
+        .arg(Arg::with_name("verbose")
+            .help("Be verbose")
+            .long("logfile")
+            .takes_value(false)
+            .required(false))
         .subcommand(SubCommand::with_name("create")
             .about("create a new backup")
             .setting(AppSettings::UnifiedHelpMessage)
@@ -150,8 +164,10 @@ fn main() {
                 .takes_value(true)
                 .required(true)))
         .get_matches();
+    // This should be safe since clap already validates that a valid value is input here
+    let loglevel = LogLevelFilter::from_str(matches.value_of("loglevel").unwrap()).unwrap();
 
-    Logger::init(LogLevelFilter::Info, matches.value_of("logfile"));
+    Logger::init(loglevel, matches.value_of("logfile"));
 
     match matches.subcommand() {
         ("create", Some(sub_m)) => cmds::create::execute(sub_m),

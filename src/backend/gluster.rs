@@ -31,6 +31,9 @@ struct GlusterConfig {
 
 impl GlusterBackend {
     pub fn new() -> Result<GlusterBackend> {
+        info!("Reading gluster config file: {}/{}",
+              home_dir().unwrap().to_string_lossy(),
+              ".config/ceph.json");
         let gluster_config: GlusterConfig = {
             let mut f = try!(File::open(format!("{}/{}",
                                                 home_dir().unwrap().to_string_lossy(),
@@ -40,9 +43,11 @@ impl GlusterBackend {
             try!(json::decode(&s))
         };
 
+        info!("Connecting to Gluster");
         let gluster_handle = try!(Gluster::connect(&gluster_config.volume_name,
                                                    &gluster_config.server,
                                                    gluster_config.port));
+        info!("Connection to Gluster established");
         Ok(GlusterBackend { gluster: gluster_handle })
     }
 }
