@@ -19,7 +19,13 @@ use rustc_serialize::hex::{ToHex, FromHex};
 pub fn execute(args: &ArgMatches) {
     let mut config = Config::default();
     #[cfg(not(feature="vault"))]
-    let args_keyfile = args.value_of("keyfile").expect("internal error");
+    let args_keyfile = match args.value_of("keyfile") {
+        Some(keyfile) => keyfile,
+        None => {
+            error!("Unable to find keyfile parameter.  This is required if not using vault.");
+            return;
+        }
+    };
     let args_backend = args.value_of("backend").expect("internal error");
     let backup_name = args.value_of("NAME").expect("internal error");
     let target_directory = Path::new(args.value_of("PATH").expect("internal error"));

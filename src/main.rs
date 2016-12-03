@@ -58,6 +58,7 @@ fn main() {
             .help("Sets the level to write the logs at")
             .long("loglevel")
             .takes_value(true)
+            .default_value("info")
             .possible_values(&["off", "error", "warn", "info", "debug", "trace"])
             .required(false))
         .arg(Arg::with_name("verbose")
