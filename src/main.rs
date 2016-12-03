@@ -63,7 +63,7 @@ fn main() {
             .required(false))
         .arg(Arg::with_name("verbose")
             .help("Be verbose")
-            .long("logfile")
+            .long("verbose")
             .takes_value(false)
             .required(false))
         .subcommand(SubCommand::with_name("create")
