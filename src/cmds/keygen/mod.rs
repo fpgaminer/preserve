@@ -24,6 +24,9 @@ pub struct VaultConfig {
 #[cfg(feature="vault")]
 fn save_keys_to_vault(buffer: &str) -> Result<()> {
     let vault_config: VaultConfig = {
+        info!("Reading vault config file: {}/{}",
+              home_dir().unwrap().to_string_lossy(),
+              ".config/vault.json");
         let mut f = try!(File::open(format!("{}/{}",
                                             home_dir().unwrap().to_string_lossy(),
                                             ".config/vault.json")));
@@ -31,7 +34,9 @@ fn save_keys_to_vault(buffer: &str) -> Result<()> {
         try!(f.read_to_string(&mut s));
         try!(json::decode(&s))
     };
+    info!("Connecting to vault");
     let client = try!(Client::new(&vault_config.host, &vault_config.token));
+    info!("Storing backup_key in vault");
     let encoded = buffer.as_bytes().to_base64(STANDARD);
     let res = try!(client.set_secret("backup_key", &encoded));
     Ok(())
@@ -87,7 +92,15 @@ pub fn execute(args: &ArgMatches) {
     let keystore = KeyStore::new();
 
     #[cfg(feature="vault")]
-    save_keys_to_vault(&keystore.as_pretty_json());
+    match save_keys_to_vault(&keystore.as_pretty_json()) {
+        Ok(_) => {
+            info!("Backup key saved to vault successfully");
+        }
+        Err(e) => {
+            error!("Saving keys to vault failed with error: {}", e);
+            return;
+        }
+    };
 
     // Save the keystore to the destination (file/stdout)
     #[cfg(not(feature="vault"))]
