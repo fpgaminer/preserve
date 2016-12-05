@@ -10,7 +10,6 @@ extern crate clap;
 extern crate crypto;
 #[cfg(feature = "gluster")]
 extern crate gfapi_sys;
-#[cfg(feature = "vault")]
 extern crate hashicorp_vault as vault;
 #[macro_use]
 extern crate json;
@@ -37,7 +36,7 @@ mod logger;
 
 use clap::{App, AppSettings, Arg, SubCommand};
 use logger::Logger;
-use log::{LogLevel, LogLevelFilter};
+use log::LogLevelFilter;
 
 use std::str::FromStr;
 
@@ -74,6 +73,12 @@ fn main() {
                 .help("Sets the keyfile to use")
                 .long("keyfile")
                 .takes_value(true)
+                .conflicts_with("vault")
+                .required(false))
+            .arg(Arg::with_name("vault")
+                .long("vault")
+                .help("Use keyfile from Vault")
+                .takes_value(false)
                 .required(false))
             .arg(Arg::with_name("backend")
                 .long("backend")
@@ -96,7 +101,17 @@ fn main() {
             .about("create a new keyfile")
             .setting(AppSettings::UnifiedHelpMessage)
             .setting(AppSettings::ColoredHelp)
-            .args_from_usage("--keyfile=[FILE] 'Write the new keyfile to FILE'"))
+            .arg(Arg::with_name("keyfile")
+                .help("Write the new keyfile to FILE")
+                .long("keyfile")
+                .takes_value(true)
+                .conflicts_with("vault")
+                .required(true))
+            .arg(Arg::with_name("vault")
+                .long("vault")
+                .help("Store the keyfile in Vault")
+                .takes_value(false)
+                .required(true)))
         .subcommand(SubCommand::with_name("list")
             .about("list existing backups")
             .setting(AppSettings::UnifiedHelpMessage)
@@ -105,7 +120,13 @@ fn main() {
                 .help("Sets the keyfile to use")
                 .long("keyfile")
                 .takes_value(true)
-                .required(false))
+                .conflicts_with("vault")
+                .required(true))
+            .arg(Arg::with_name("vault")
+                .long("vault")
+                .help("Use keyfile from Vault")
+                .takes_value(false)
+                .required(true))
             .arg(Arg::with_name("backend")
                 .long("backend")
                 .help("Sets the backend to use")
@@ -123,7 +144,13 @@ fn main() {
                 .help("Sets the keyfile to use")
                 .long("keyfile")
                 .takes_value(true)
-                .required(false))
+                .conflicts_with("vault")
+                .required(true))
+            .arg(Arg::with_name("vault")
+                .long("vault")
+                .help("Use keyfile from Vault")
+                .takes_value(false)
+                .required(true))
             .arg(Arg::with_name("backend")
                 .long("backend")
                 .help("Sets the backend to use")
@@ -154,7 +181,13 @@ fn main() {
                 .help("Sets the keyfile to use")
                 .long("keyfile")
                 .takes_value(true)
-                .required(false))
+                .conflicts_with("vault")
+                .required(true))
+            .arg(Arg::with_name("vault")
+                .long("vault")
+                .help("Use keyfile from Vault")
+                .takes_value(false)
+                .required(true))
             .arg(Arg::with_name("backend")
                 .long("backend")
                 .help("Sets the backend to use")

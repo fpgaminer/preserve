@@ -29,8 +29,6 @@ pub fn execute(args: &ArgMatches) {
         return;
     }
 
-    #[cfg(not(feature="vault"))]
-    let args_keyfile = args.value_of("keyfile").expect("internal error");
     let args_backend = args.value_of("backend").expect("internal error");
     let backup_name = args.value_of("NAME").expect("internal error");
     let target_directory = match args.value_of("PATH") {
@@ -51,21 +49,23 @@ pub fn execute(args: &ArgMatches) {
         return;
     }
 
-    #[cfg(feature="vault")]
-    let keystore = match KeyStore::load_from_vault() {
-        Ok(keystore) => keystore,
-        Err(err) => {
-            error!("Unable to load keyfile: {}", err);
-            return;
+    let keystore = if args.is_present("vault") {
+        match KeyStore::load_from_vault() {
+            Ok(keystore) => keystore,
+            Err(err) => {
+                error!("Unable to load keyfile: {}", err);
+                return;
+            }
         }
-    };
-
-    #[cfg(not(feature="vault"))]
-    let keystore = match KeyStore::load_from_path(args_keyfile) {
-        Ok(keystore) => keystore,
-        Err(err) => {
-            error!("Unable to load keyfile: {}", err);
-            return;
+    } else {
+        let args_keyfile = args.value_of("keyfile")
+            .expect("internal error.  keyfile not specified");
+        match KeyStore::load_from_path(args_keyfile) {
+            Ok(keystore) => keystore,
+            Err(err) => {
+                error!("Unable to load keyfile: {}", err);
+                return;
+            }
         }
     };
 

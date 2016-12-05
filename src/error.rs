@@ -38,14 +38,12 @@ pub enum Error {
     #[cfg(feature = "ceph")]
     RadosError(::ceph_rust::ceph::RadosError),
     Sqlite(SqliteError),
-    #[cfg(feature = "vault")]
     VaultError(::vault::Error),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            #[cfg(feature="vault")]
             VaultError(ref e) => write!(f, "{}", e),
             _ => f.write_str(self.description()),
         }
@@ -87,7 +85,6 @@ impl StdError for Error {
             #[cfg(feature = "ceph")]
             RadosError(ref e) => e.description(),
             Sqlite(ref e) => e.description(),
-            #[cfg(feature = "vault")]
             VaultError(ref e) => e.description(),
             FromUtf8Error(ref e) => e.description(),
         }
@@ -115,7 +112,6 @@ impl StdError for Error {
             JsonDecoder(ref error) => Some(error),
             #[cfg(feature = "gluster")]
             GlusterError(ref error) => Some(error),
-            #[cfg(feature = "vault")]
             VaultError(ref error) => Some(error),
             #[cfg(feature = "ceph")]
             RadosError(ref error) => Some(error),
@@ -157,7 +153,6 @@ impl From<::gfapi_sys::gluster::GlusterError> for Error {
     }
 }
 
-#[cfg(feature = "vault")]
 impl From<::vault::Error> for Error {
     fn from(err: ::vault::Error) -> Error {
         VaultError(err)

@@ -15,15 +15,12 @@ matrix:
     - rust: beta
   include:
     - rust: nightly
-      env: FEATURES="gluster vault"
+      env: FEATURES="gluster"
     - rust: beta
-      env: FEATURES="ceph vault"
+      env: FEATURES="ceph"
 env:
   - FEATURES="ceph"
   - FEATURES="gluster"
-  - FEATURES="vault"
-  - FEATURES="ceph vault"
-  - FEATURES="gluster vault"
 install:
   - sudo bin/install.sh
 addons:

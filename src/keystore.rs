@@ -1,7 +1,6 @@
 use std::env::home_dir;
 use std::io::{self, BufReader, Read};
 use std::fs;
-#[cfg(feature="vault")]
 use std::fs::File;
 use std::path::Path;
 use std::str::FromStr;
@@ -15,7 +14,6 @@ use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::curve25519;
 
 use error::*;
-#[cfg(feature="vault")]
 use cmds::keygen::VaultConfig;
 
 use rand::{OsRng, Rng};
@@ -23,7 +21,6 @@ use rustc_serialize;
 use rustc_serialize::json;
 use rustc_serialize::hex::{ToHex, FromHex};
 use rustc_serialize::base64::{self, ToBase64, FromBase64, FromBase64Error};
-#[cfg(feature="vault")]
 use vault::Client;
 
 
@@ -148,7 +145,6 @@ impl KeyStore {
         format!("{}", json::as_pretty_json(&self))
     }
 
-    #[cfg(feature="vault")]
     pub fn load_from_vault() -> Result<KeyStore> {
         let vault_config: VaultConfig = {
             let mut f = try!(File::open(format!("{}/{}",

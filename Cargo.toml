@@ -10,7 +10,6 @@ version = "0.1.0"
 [features]
 ceph = ["ceph-rust"]
 gluster = ["gfapi-sys"]
-vault = ["hashicorp_vault"]
 
 [dependencies]
 ceph-rust = {git = "https://github.com/cholcombe973/ceph-rust", optional = true}
@@ -27,7 +26,7 @@ rustc-serialize = "^0.3"
 tempdir = "^0.3"
 time = "0.1.35"
 url = "^1.2"
-hashicorp_vault = {version = "^0.6", optional = true}
+hashicorp_vault = "^0.6"
 
 [dependencies.rust-acd]
 git = "https://github.com/fpgaminer/rust-acd.git"
