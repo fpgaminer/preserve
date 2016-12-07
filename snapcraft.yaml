@@ -12,7 +12,10 @@ confinement: strict # use 'strict' once you have the right plugs and slots
 parts:
   preserve:
     # See 'snapcraft plugins'
-    plugin: x-rust
+    plugin: rust
+    rust-features:
+      - ceph
+      - gluster
     source: .
     stage-packages:
       - pkg-config

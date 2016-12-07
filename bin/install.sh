@@ -121,7 +121,6 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 mkdir -p $HOME/.config
-echo -e "Installing vault"
 _vault
 echo -e "Features to install: $FEATURES\n"
 for APP in $FEATURES
