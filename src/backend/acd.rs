@@ -3,7 +3,7 @@ use std::env::home_dir;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use backend::Backend;
 use acd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::fs::File;
 use std::io::Read;
 use rustc_serialize::json;
@@ -16,22 +16,36 @@ pub struct AcdBackend {
 }
 
 impl AcdBackend {
-    pub fn new() -> Result<AcdBackend> {
+    pub fn new(config_dir: Option<PathBuf>) -> Result<AcdBackend> {
         #[derive(RustcDecodable)]
         struct SecurityProfile {
             client_id: String,
             client_secret: String,
         }
 
-        let security_profile: SecurityProfile = {
-            let mut f = try!(File::open(format!("{}/{}",
-                                                home_dir().unwrap().to_string_lossy(),
-                                                ".config/acd.security_profile.json")));
-            let mut s = String::new();
-            try!(f.read_to_string(&mut s));
-            try!(json::decode(&s))
-        };
+        let security_profile: SecurityProfile = match config_dir {
+            Some(config) => {
+                info!("Reading security_profile config file: {}/{}",
+                      config.display(),
+                      "acd.security_profile.json");
+                let mut f = try!(File::open(config.join("acd.security_profile.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+            }
+            None => {
+                info!("Reading security_profile config file: {}/{}",
+                      home_dir().unwrap().to_string_lossy(),
+                      ".config/acd.security_profile.json");
+                let mut f = try!(File::open(format!("{}/{}",
+                                                    home_dir().unwrap().to_string_lossy(),
+                                                    ".config/acd.security_profile.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
 
+            }
+        };
         let acd = try!(acd::Client::new(&security_profile.client_id,
                                         &security_profile.client_secret,
                                         ".config",

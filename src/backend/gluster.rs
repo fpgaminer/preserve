@@ -9,6 +9,7 @@ use std::str::FromStr;
 use self::gfapi_sys::gluster::{Gluster, GlusterDirectory};
 
 use backend::Backend;
+use clap::ArgMatches;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use libc::{O_RDONLY, O_WRONLY};
 use rustc_serialize::json;
@@ -30,17 +31,30 @@ struct GlusterConfig {
 }
 
 impl GlusterBackend {
-    pub fn new() -> Result<GlusterBackend> {
-        info!("Reading gluster config file: {}/{}",
-              home_dir().unwrap().to_string_lossy(),
-              ".config/ceph.json");
-        let gluster_config: GlusterConfig = {
-            let mut f = try!(File::open(format!("{}/{}",
-                                                home_dir().unwrap().to_string_lossy(),
-                                                ".config/gluster.json")));
-            let mut s = String::new();
-            try!(f.read_to_string(&mut s));
-            try!(json::decode(&s))
+    pub fn new(config_dir: Option<PathBuf>) -> Result<GlusterBackend> {
+        let gluster_config: GlusterConfig = match config_dir {
+            Some(config) => {
+                // If --configdir was specified we use that as the base path
+                info!("Reading gluster config file: {}/{}",
+                      config.display(),
+                      "gluster.json");
+                let mut f = try!(File::open(config.join("gluster.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+            }
+            None => {
+                // Otherwise we fallback on the $HOME as the base path
+                info!("Reading gluster config file: {}/{}",
+                      home_dir().unwrap().to_string_lossy(),
+                      ".config/ceph.json");
+                let mut f = try!(File::open(format!("{}/{}",
+                                                    home_dir().unwrap().to_string_lossy(),
+                                                    ".config/gluster.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+            }
         };
 
         info!("Connecting to Gluster");

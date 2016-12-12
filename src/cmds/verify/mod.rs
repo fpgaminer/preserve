@@ -1,18 +1,20 @@
-use keystore::{KeyStore, Secret};
 use std::collections::HashSet;
-use rustc_serialize::hex::FromHex;
-use backend::{self, Backend};
+use std::path::PathBuf;
+
 use archive::{Archive, File};
-use rand::{thread_rng, Rng};
+use backend::{self, Backend};
 use clap::ArgMatches;
+use keystore::{KeyStore, Secret};
+use rand::{thread_rng, Rng};
+use rustc_serialize::hex::FromHex;
 
 
-pub fn execute(args: &ArgMatches) {
+pub fn execute(args: &ArgMatches, config_dir: Option<PathBuf>) {
     let backup_name = args.value_of("NAME").expect("internal error");
     let args_backend = args.value_of("backend").expect("internal error");
 
     let keystore = if args.is_present("vault") {
-        match KeyStore::load_from_vault() {
+        match KeyStore::load_from_vault(config_dir.clone()) {
             Ok(keystore) => keystore,
             Err(err) => {
                 error!("Unable to load keyfile: {}", err);
@@ -31,7 +33,7 @@ pub fn execute(args: &ArgMatches) {
         }
     };
 
-    let mut backend = match backend::backend_from_backend_path(args_backend) {
+    let mut backend = match backend::backend_from_backend_path(args_backend, config_dir) {
         Ok(backend) => backend,
         Err(err) => {
             error!("Unable to load backend: {}", err);

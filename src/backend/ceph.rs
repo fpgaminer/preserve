@@ -2,11 +2,13 @@ use std::env::home_dir;
 use std::fs::File;
 use std::io::Read;
 use std::str::FromStr;
+use std::path::PathBuf;
 use backend::Backend;
 use ceph_rust::rados::{rados_t, rados_ioctx_t};
 use ceph_rust::ceph::{get_rados_ioctx, connect_to_ceph, Pool, rados_object_stat,
                       destroy_rados_ioctx, disconnect_from_ceph, rados_object_read,
                       rados_list_pool_objects, rados_object_write_full};
+use clap::ArgMatches;
 use error::*;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use rustc_serialize::json;
@@ -34,17 +36,29 @@ struct CephConfig {
 }
 
 impl CephBackend {
-    pub fn new() -> Result<CephBackend> {
-        info!("Reading ceph config file: {}/{}",
-              home_dir().unwrap().to_string_lossy(),
-              ".config/ceph.json");
-        let ceph_config: CephConfig = {
-            let mut f = try!(File::open(format!("{}/{}",
-                                                home_dir().unwrap().to_string_lossy(),
-                                                ".config/ceph.json")));
-            let mut s = String::new();
-            try!(f.read_to_string(&mut s));
-            try!(json::decode(&s))
+    pub fn new(config_dir: Option<PathBuf>) -> Result<CephBackend> {
+        let ceph_config: CephConfig = match config_dir {
+            Some(config) => {
+                info!("Reading ceph config file: {}/{}",
+                      config.display(),
+                      "ceph.json");
+                let mut f = try!(File::open(config.join("ceph.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+
+            }
+            None => {
+                info!("Reading ceph config file: {}/{}",
+                      home_dir().unwrap().to_string_lossy(),
+                      ".config/ceph.json");
+                let mut f = try!(File::open(format!("{}/{}",
+                                                    home_dir().unwrap().to_string_lossy(),
+                                                    ".config/ceph.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+            }
         };
         info!("Connecting to Ceph");
         let cluster_handle = try!(connect_to_ceph(&ceph_config.user_id, &ceph_config.config_file));

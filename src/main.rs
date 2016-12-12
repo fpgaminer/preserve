@@ -38,6 +38,7 @@ use clap::{App, AppSettings, Arg, SubCommand};
 use logger::Logger;
 use log::LogLevelFilter;
 
+use std::path::PathBuf;
 use std::str::FromStr;
 
 fn main() {
@@ -64,6 +65,11 @@ fn main() {
             .help("Be verbose")
             .long("verbose")
             .takes_value(false)
+            .required(false))
+        .arg(Arg::with_name("configdir")
+            .help("The directory where all config files can be found")
+            .long("configdir")
+            .takes_value(true)
             .required(false))
         .subcommand(SubCommand::with_name("create")
             .about("create a new backup")
@@ -203,12 +209,18 @@ fn main() {
 
     Logger::init(loglevel, matches.value_of("logfile"));
 
+    let config_dir = if matches.is_present("configdir") {
+        Some(PathBuf::from(matches.value_of("configdir").unwrap()))
+    } else {
+        None
+    };
+
     match matches.subcommand() {
-        ("create", Some(sub_m)) => cmds::create::execute(sub_m),
-        ("keygen", Some(sub_m)) => cmds::keygen::execute(sub_m),
-        ("list", Some(sub_m)) => cmds::list::execute(sub_m),
-        ("restore", Some(sub_m)) => cmds::restore::execute(sub_m),
-        ("verify", Some(sub_m)) => cmds::verify::execute(sub_m),
+        ("create", Some(sub_m)) => cmds::create::execute(sub_m, config_dir),
+        ("keygen", Some(sub_m)) => cmds::keygen::execute(sub_m, config_dir),
+        ("list", Some(sub_m)) => cmds::list::execute(sub_m, config_dir),
+        ("restore", Some(sub_m)) => cmds::restore::execute(sub_m, config_dir),
+        ("verify", Some(sub_m)) => cmds::verify::execute(sub_m, config_dir),
         _ => panic!("Unknown subcommand"),
     }
 }

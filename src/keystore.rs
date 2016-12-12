@@ -2,7 +2,7 @@ use std::env::home_dir;
 use std::io::{self, BufReader, Read};
 use std::fs;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use crypto;
@@ -145,14 +145,30 @@ impl KeyStore {
         format!("{}", json::as_pretty_json(&self))
     }
 
-    pub fn load_from_vault() -> Result<KeyStore> {
-        let vault_config: VaultConfig = {
-            let mut f = try!(File::open(format!("{}/{}",
-                                                home_dir().unwrap().to_string_lossy(),
-                                                ".config/vault.json")));
-            let mut s = String::new();
-            try!(f.read_to_string(&mut s));
-            try!(json::decode(&s))
+    pub fn load_from_vault(config_dir: Option<PathBuf>) -> Result<KeyStore> {
+        let vault_config: VaultConfig = match config_dir {
+            Some(config) => {
+                // If --configdir was specified we use that as the base path
+                info!("Reading vault config file: {}/{}",
+                      config.display(),
+                      "vault.json");
+                let mut f = try!(File::open(config.join("vault.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+            }
+            None => {
+                // Otherwise we fallback on the $HOME as the base path
+                info!("Reading vault config file: {}/{}",
+                      home_dir().unwrap().to_string_lossy(),
+                      ".config/vault.json");
+                let mut f = try!(File::open(format!("{}/{}",
+                                                    home_dir().unwrap().to_string_lossy(),
+                                                    ".config/vault.json")));
+                let mut s = String::new();
+                try!(f.read_to_string(&mut s));
+                try!(json::decode(&s))
+            }
         };
         let client = try!(Client::new(&vault_config.host, &vault_config.token));
         let secret_64 = try!(client.get_secret("backup_key"));
@@ -229,9 +245,10 @@ impl KeyStore {
         String::from_utf8(plaintext).map_err(|_| Error::CorruptArchiveName)
     }
 
-	pub fn encrypt_archive(&self,
-		&EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName,
-		archive: &[u8]) -> EncryptedArchive {
+    pub fn encrypt_archive(&self,
+                           &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName,
+                           archive: &[u8])
+                           -> EncryptedArchive {
         let ephemeral_private_key: Curve25519PrivateKey = {
             let mut rng = OsRng::new().expect("OsRng failed to initialize");
             rng.gen()
@@ -264,9 +281,10 @@ impl KeyStore {
         EncryptedArchive(payload)
     }
 
-	pub fn decrypt_archive(&self,
-		 &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName,
-		 &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<Vec<u8>> {
+    pub fn decrypt_archive(&self,
+                           &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName,
+                           &EncryptedArchive(ref payload): &EncryptedArchive)
+                           -> Result<Vec<u8>> {
         // TODO: Nasty fat constants
         if payload.len() < 64 {
             return Err(Error::CorruptArchiveTruncated);

@@ -21,7 +21,7 @@ struct DownloadCache {
 }
 
 
-pub fn execute(args: &ArgMatches) {
+pub fn execute(args: &ArgMatches, config_dir: Option<PathBuf>) {
     let debug_decrypt = args.is_present("debug-decrypt");
 
     if !debug_decrypt && !args.is_present("PATH") {
@@ -50,7 +50,7 @@ pub fn execute(args: &ArgMatches) {
     }
 
     let keystore = if args.is_present("vault") {
-        match KeyStore::load_from_vault() {
+        match KeyStore::load_from_vault(config_dir.clone()) {
             Ok(keystore) => keystore,
             Err(err) => {
                 error!("Unable to load keyfile: {}", err);
@@ -71,7 +71,7 @@ pub fn execute(args: &ArgMatches) {
 
     let block_store = BlockStore::new(&keystore);
 
-    let mut backend = match backend::backend_from_backend_path(args_backend) {
+    let mut backend = match backend::backend_from_backend_path(args_backend, config_dir) {
         Ok(backend) => backend,
         Err(err) => {
             error!("Unable to load backend: {}", err);

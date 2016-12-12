@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use error::*;
 use url::Url;
@@ -32,18 +34,18 @@ pub trait Backend {
 
 
 /// Given a backend path, return a Box'd Backend.
-pub fn backend_from_backend_path(path: &str) -> Result<Box<Backend>> {
+pub fn backend_from_backend_path(path: &str, config_dir: Option<PathBuf>) -> Result<Box<Backend>> {
     let url = try!(Url::parse(path).map_err(|_| {
         Error::BadBackendPath("Given backend path could not be understood.".to_string())
     }));
 
     let backend: Box<Backend> = match url.scheme() {
-        "acd" => Box::new(try!(AcdBackend::new())),
+        "acd" => Box::new(try!(AcdBackend::new(config_dir))),
         #[cfg(feature = "ceph")]
-        "ceph" => Box::new(try!(CephBackend::new())),
+        "ceph" => Box::new(try!(CephBackend::new(config_dir))),
         "file" => Box::new(FileBackend::new(url.path())),
         #[cfg(feature = "gluster")]
-        "gluster" => Box::new(try!(GlusterBackend::new())),
+        "gluster" => Box::new(try!(GlusterBackend::new(config_dir))),
         e => return Err(Error::BadBackendPath(format!("Unknown backend: {}", e))),
     };
 

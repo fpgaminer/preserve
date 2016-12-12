@@ -16,7 +16,7 @@ use rusqlite;
 use rustc_serialize::hex::{ToHex, FromHex};
 
 
-pub fn execute(args: &ArgMatches) {
+pub fn execute(args: &ArgMatches, config_dir: Option<PathBuf>) {
     let mut config = Config::default();
     let args_backend = args.value_of("backend").expect("internal error");
     let backup_name = args.value_of("NAME").expect("internal error");
@@ -30,10 +30,10 @@ pub fn execute(args: &ArgMatches) {
     }
 
     let keystore = if args.is_present("vault") {
-        match KeyStore::load_from_vault() {
+        match KeyStore::load_from_vault(config_dir.clone()) {
             Ok(keystore) => keystore,
             Err(err) => {
-                error!("Unable to load keyfile: {}", err);
+                error!("Unable to load keyfile from vault: {}", err);
                 return;
             }
         }
@@ -51,7 +51,7 @@ pub fn execute(args: &ArgMatches) {
 
     let block_store = BlockStore::new(&keystore);
 
-    let mut backend = match backend::backend_from_backend_path(args_backend) {
+    let mut backend = match backend::backend_from_backend_path(args_backend, config_dir) {
         Ok(backend) => backend,
         Err(err) => {
             error!("Unable to load backend: {}", err);

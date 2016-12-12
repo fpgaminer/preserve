@@ -1,8 +1,9 @@
 use std::env::home_dir;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Read, Write};
+use std::path::PathBuf;
 
-use clap::ArgMatches;
+use clap::{App, ArgMatches};
 use error::*;
 use keystore::KeyStore;
 use rustc_serialize::json;
@@ -17,17 +18,30 @@ pub struct VaultConfig {
     pub token: String,
 }
 
-fn save_keys_to_vault(buffer: &str) -> Result<()> {
-    let vault_config: VaultConfig = {
-        info!("Reading vault config file: {}/{}",
-              home_dir().unwrap().to_string_lossy(),
-              ".config/vault.json");
-        let mut f = try!(File::open(format!("{}/{}",
-                                            home_dir().unwrap().to_string_lossy(),
-                                            ".config/vault.json")));
-        let mut s = String::new();
-        try!(f.read_to_string(&mut s));
-        try!(json::decode(&s))
+fn save_keys_to_vault(buffer: &str, config_dir: Option<PathBuf>) -> Result<()> {
+    let vault_config: VaultConfig = match config_dir {
+        Some(config) => {
+            // If --configdir was specified we use that as the base path
+            info!("Reading vault config file: {}/{}",
+                  config.display(),
+                  "vault.json");
+            let mut f = try!(File::open(config.join("vault.json")));
+            let mut s = String::new();
+            try!(f.read_to_string(&mut s));
+            try!(json::decode(&s))
+        }
+        None => {
+            // Otherwise we fallback on the $HOME as the base path
+            info!("Reading vault config file: {}/{}",
+                  home_dir().unwrap().to_string_lossy(),
+                  ".config/vault.json");
+            let mut f = try!(File::open(format!("{}/{}",
+                                                home_dir().unwrap().to_string_lossy(),
+                                                ".config/vault.json")));
+            let mut s = String::new();
+            try!(f.read_to_string(&mut s));
+            try!(json::decode(&s))
+        }
     };
     info!("Connecting to vault");
     let client = try!(Client::new(&vault_config.host, &vault_config.token));
@@ -39,7 +53,7 @@ fn save_keys_to_vault(buffer: &str) -> Result<()> {
 
 #[test]
 fn test_save_keys_to_vault() {
-    save_keys_to_vault("123").unwrap();
+    save_keys_to_vault("123", None).unwrap();
     let vault_config: VaultConfig = {
         let mut f = File::open(format!("{}/{}",
                                        home_dir().unwrap().to_string_lossy(),
@@ -53,13 +67,13 @@ fn test_save_keys_to_vault() {
     client.delete_secret("backup_key").unwrap()
 }
 
-pub fn execute(args: &ArgMatches) {
+pub fn execute(args: &ArgMatches, config_dir: Option<PathBuf>) {
     if args.is_present("vault") {
         // Save the keyfile to vault
         // Create a new keystore
         let keystore = KeyStore::new();
 
-        match save_keys_to_vault(&keystore.as_pretty_json()) {
+        match save_keys_to_vault(&keystore.as_pretty_json(), config_dir) {
             Ok(_) => {
                 info!("Backup key saved to vault successfully");
             }
