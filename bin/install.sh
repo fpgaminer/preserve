@@ -33,8 +33,7 @@ EOF
 {
  "config_file": "/etc/ceph/ceph.conf",
  "user_id": "admin",
- "data_pool": "data",
- "metadata_pool": "metadata"
+ "data_pool": "rbd",
 }
 EOF
   ceph-mon --cluster ceph --mkfs -i a --keyring /dev/null

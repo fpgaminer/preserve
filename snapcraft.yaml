@@ -28,4 +28,4 @@ parts:
 apps:
   preserve:
     command: preserve
-    plugs: [network]
+    plugs: [network, home]

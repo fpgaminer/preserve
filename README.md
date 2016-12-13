@@ -86,6 +86,20 @@ of the backends.
 `glusterfs-common` installed or these backends will fail to link properly.
 The vault key storage requires the `--features "vault"` flag to be built.
 
+## Snap Package
+Some notes about the snap package.
+If you're using the snap be aware that it can only access configuration files
+in the user's home directory that installed the binary.  Anywhere else it will
+have a permission denied problem. The preserve juju charm installs all the configuration
+files in the directory: `/root/snap/preserve/common/`
+```
+preserve --configdir /root/snap/preserve/common/ keygen --vault
+Reading vault config file: /root/snap/preserve/common/vault.json
+Connecting to vault
+Storing backup_key in vault
+Backup key saved to vault successfully
+```
+
 ## Test
 ```
 cargo test

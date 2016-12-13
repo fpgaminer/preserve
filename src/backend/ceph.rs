@@ -7,7 +7,7 @@ use backend::Backend;
 use ceph_rust::rados::{rados_t, rados_ioctx_t};
 use ceph_rust::ceph::{get_rados_ioctx, connect_to_ceph, Pool, rados_object_stat,
                       destroy_rados_ioctx, disconnect_from_ceph, rados_object_read,
-                      rados_list_pool_objects, rados_object_write_full};
+                      rados_list_pool_objects, rados_object_write_full, rados_set_namespace};
 use clap::ArgMatches;
 use error::*;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
@@ -19,8 +19,6 @@ pub struct CephBackend {
     ioctx: rados_ioctx_t,
     /// where to store the data chunks
     data_pool: String,
-    /// Where to store the archive metadata
-    metadata_pool: String,
 }
 
 #[derive(RustcDecodable)]
@@ -31,8 +29,6 @@ struct CephConfig {
     user_id: String,
     /// Where to store the data
     data_pool: String,
-    /// Where to store the metadata
-    metadata_pool: String,
 }
 
 impl CephBackend {
@@ -64,11 +60,11 @@ impl CephBackend {
         let cluster_handle = try!(connect_to_ceph(&ceph_config.user_id, &ceph_config.config_file));
         info!("Getting rados ioctx");
         let ioctx = try!(get_rados_ioctx(cluster_handle, &ceph_config.data_pool));
+        info!("Connected to ceph");
         Ok(CephBackend {
             cluster_handle: cluster_handle,
             ioctx: ioctx,
             data_pool: ceph_config.data_pool,
-            metadata_pool: ceph_config.metadata_pool,
         })
     }
 }
@@ -110,7 +106,8 @@ impl Backend for CephBackend {
 
     fn fetch_archive(&mut self, name: &EncryptedArchiveName) -> Result<EncryptedArchive> {
         let mut ciphertext = Vec::<u8>::with_capacity(1024 * 1024);
-        let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
+        let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.data_pool));
+        try!(rados_set_namespace(ioctx, "metadata"));
         let bytes_read = try!(rados_object_read(ioctx, &name.to_string(), &mut ciphertext, 0));
         debug!("Read {} bytes from ceph for fetch_archive", bytes_read);
         destroy_rados_ioctx(ioctx);
@@ -122,7 +119,8 @@ impl Backend for CephBackend {
                      name: &EncryptedArchiveName,
                      &EncryptedArchive(ref payload): &EncryptedArchive)
                      -> Result<()> {
-        let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
+        let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.data_pool));
+        try!(rados_set_namespace(ioctx, "metadata"));
 
         try!(rados_object_write_full(ioctx, &name.to_string(), payload));
         destroy_rados_ioctx(ioctx);
@@ -131,7 +129,8 @@ impl Backend for CephBackend {
 
     fn list_archives(&mut self) -> Result<Vec<EncryptedArchiveName>> {
         let mut archives = Vec::new();
-        let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.metadata_pool));
+        let ioctx = try!(get_rados_ioctx(self.cluster_handle, &self.data_pool));
+        try!(rados_set_namespace(ioctx, "metadata"));
         let pool_list_ctx = try!(rados_list_pool_objects(ioctx));
         let pool = Pool { ctx: pool_list_ctx };
 
