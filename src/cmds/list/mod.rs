@@ -67,6 +67,8 @@ pub fn execute(args: &ArgMatches, config_dir: Option<PathBuf>) {
     }
 
     if encrypted_archive_names.is_empty() {
-        println!("No archives found");
+        if !args.is_present("json") {
+            println!("No archives found");
+        }
     }
 }

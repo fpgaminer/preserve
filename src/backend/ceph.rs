@@ -8,7 +8,6 @@ use ceph_rust::rados::{rados_t, rados_ioctx_t};
 use ceph_rust::ceph::{get_rados_ioctx, connect_to_ceph, Pool, rados_object_stat,
                       destroy_rados_ioctx, disconnect_from_ceph, rados_object_read,
                       rados_list_pool_objects, rados_object_write_full, rados_set_namespace};
-use clap::ArgMatches;
 use error::*;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use rustc_serialize::json;

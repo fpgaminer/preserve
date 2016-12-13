@@ -9,7 +9,6 @@ use std::str::FromStr;
 use self::gfapi_sys::gluster::{Gluster, GlusterDirectory};
 
 use backend::Backend;
-use clap::ArgMatches;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use libc::{O_RDONLY, O_WRONLY};
 use rustc_serialize::json;
