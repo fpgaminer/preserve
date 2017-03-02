@@ -1,12 +1,32 @@
 language: rust
-sudo: false
+dist: trusty
+sudo: required
 rust:
   - stable
   - beta
+  - nightly
+matrix:
+  allow_failures:
+  - rust: nightly
+  - rust: beta
+  fast_finish: true
+  exclude:
+    - rust: nightly
+    - rust: beta
+  include:
+    - rust: nightly
+      env: FEATURES="gluster"
+    - rust: beta
+      env: FEATURES="ceph"
+env:
+  - FEATURES="ceph"
+  - FEATURES="gluster"
+install:
+  - sudo bin/install.sh
 addons:
   apt:
     packages:
       - liblzma-dev
+      - unzip
 script:
-  - cargo build --verbose
-  - cargo test --verbose
+  - cargo test --features="$FEATURES" --verbose

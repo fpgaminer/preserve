@@ -1,0 +1,31 @@
+name: preserve
+version: "0.1.0"
+summary: Encrypted backup system
+description: |
+  Preserve is an encrypted backup system written in Rust. All backup data is
+  encrypted, so backups can be stored on untrusted devices/services without
+  exposing any of your data. Backups are simple, operating very similar to
+  creating an archive like Zip or Tar. Deduplication makes this space efficient.
+grade: stable # must be 'stable' to release into candidate/stable channels
+confinement: classic # use 'strict' once you have the right plugs and slots
+
+parts:
+  preserve:
+    # See 'snapcraft plugins'
+    plugin: x-rust
+    rust-features:
+      - ceph
+      - gluster
+    source: .
+    stage-packages:
+      - pkg-config
+      - libssl-dev
+      - libacl1
+      - libsqlite3-dev
+      - liblzma-dev
+      - librados-dev
+      - glusterfs-common
+apps:
+  preserve:
+    command: preserve
+    plugs: [network, home]

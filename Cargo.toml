@@ -7,9 +7,16 @@ readme = "README.md"
 repository = "https://github.com/fpgaminer/preserve"
 version = "0.1.0"
 
+[features]
+ceph = ["ceph-rust"]
+gluster = ["gfapi-sys"]
+
 [dependencies]
-clap = "2.5.1"
+ceph-rust = {git = "https://github.com/cholcombe973/ceph-rust", optional = true}
+clap = "^2.19"
+gfapi-sys = {version = "^0.2", optional = true}
 libc = "^0.2"
+json = "^0.11"
 log = "0.3.6"
 rand = "^0.3"
 rusqlite = "^0.6"
@@ -18,14 +25,19 @@ rust-lzma = "^0.2"
 rustc-serialize = "^0.3"
 tempdir = "^0.3"
 time = "0.1.35"
-url = "1.1.1"
+url = "^1.2"
+hashicorp_vault = "^0.6"
 
 [dependencies.rust-acd]
 git = "https://github.com/fpgaminer/rust-acd.git"
 optional = false
 
-[profile]
-
 [profile.dev]
-debug = true
-opt-level = 2
+opt-level = 0      # controls the `--opt-level` the compiler builds with
+debug = true       # controls whether the compiler passes `-g`
+rpath = false      # controls whether the compiler passes `-C rpath`
+lto = false        # controls `-C lto` for binaries and staticlibs
+debug-assertions = true # controls whether debug assertions are enabled
+codegen-units = 1  # controls whether the compiler passes `-C codegen-units`
+                   # `codegen-units` is ignored when `lto = true`
+panic = 'unwind'   # panic strategy (`-C panic=...`), can also be 'abort'
