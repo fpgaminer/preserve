@@ -3,10 +3,8 @@ use error::*;
 use url::Url;
 
 pub mod file;
-pub mod acd;
 
 pub use backend::file::FileBackend;
-pub use backend::acd::AcdBackend;
 
 
 pub trait Backend {
@@ -25,7 +23,6 @@ pub fn backend_from_backend_path(path: &str) -> Result<Box<Backend>> {
 	let url = try!(Url::parse(path).map_err(|_| Error::BadBackendPath("Given backend path could not be understood.".to_string())));
 
 	let backend: Box<Backend> = match url.scheme() {
-		"acd" => Box::new(try!(AcdBackend::new())),
 		"file" => Box::new(FileBackend::new(url.path())),
 		e => return Err(Error::BadBackendPath(format!("Unknown backend: {}", e))),
 	};

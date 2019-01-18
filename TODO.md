@@ -8,19 +8,16 @@
  * Clean up crypto-spec.md
  * Config file
  * Diehard randomness testing
- * ACD: Try adding Keep-Alive header?
  * Clean old entries out of mtime_cache
  * Restore file owner/group
  * At the top level of archive, store a table mapping uids/gids to names.  Then, during extraction, do a remap.  For every entry in the table, check the local system for the given user name or group name.  Use that to remap the archive's uid/gid to the local system's uid/gid.
  * Add the ability for keygen to deterministically generate a keystore from a password.  Use heavy password hashing (maybe time it to a minute or so?) by default.
  * Add --one-file-system flag (most of the mechanics are in the code, we just haven't added the flag)
  * During archive creation, after reading all files, sleep for a second and then rescan the metadata on all files.  If there are any mismatches, reread those files.  This should catch any file modification that the existing file modification detection scheme misses (due to lag in mtime updates).
- * ACD backend: specify path
  * When warning that a symlink was backed up but its link was not, we should also print the link.
  * The Docker based integration test should do more manipulation between backups.
  * The Docker based integration test script should more clearly indicate whether the test passed or not.
  * The Docker based integration test should be integrated into Travis-CI.
- * The Docker based integration test should test the ACD backend as well (waiting on the ability to specify ACD path for the ACD path).
  * Add the ability to extract specific files/folders during a restore.
- * rust-acd should use the log.
  * verbose flag
+ * Split chunks using a rolling hash

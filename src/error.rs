@@ -1,7 +1,6 @@
 use std::error::Error as StdError;
 use std::io::Error as IoError;
 use rustc_serialize::json::DecoderError as JsonDecoderError;
-use acd::Error as AcdError;
 use rusqlite::Error as SqliteError;
 use std::fmt;
 use self::Error::*;
@@ -27,7 +26,6 @@ pub enum Error {
 	CorruptArchiveBadBlockSecret,
 	CorruptBlock,
 	ArchiveNameConflict,
-	Acd(AcdError),
 	BlockNotFound,
 	ArchiveNotFound,
 	InvalidArchiveName,
@@ -55,7 +53,6 @@ impl StdError for Error {
 			CorruptArchiveNotUtf8 => "The encrypted archive is corrupt: data is not UTF-8",
 			CorruptArchiveBadJson => "The encrypted archive is corrupt: the internal JSON data is invalid",
 			CorruptBlock => "The encrypted block is corrupted",
-			Acd(_) => "There was a problem communicating with Amazon Cloud Drive",
 			BlockNotFound => "The specified block was not found",
 			ArchiveNotFound => "The specified archive was not found",
 			InvalidArchiveName => "An invalid archive name was encountered.  Possibly a stray file.",
@@ -79,7 +76,6 @@ impl StdError for Error {
 			CorruptArchiveNotUtf8 => None,
 			CorruptArchiveBadJson => None,
 			CorruptBlock => None,
-			Acd(ref error) => Some(error),
 			ArchiveNameConflict => None,
 			BlockNotFound => None,
 			InvalidArchiveName => None,
@@ -100,12 +96,6 @@ impl From<IoError> for Error {
 impl From<JsonDecoderError> for Error {
 	fn from(err: JsonDecoderError) -> Error {
 		JsonDecoder(err)
-	}
-}
-
-impl From<AcdError> for Error {
-	fn from(err: AcdError) -> Error {
-		Acd(err)
 	}
 }
 

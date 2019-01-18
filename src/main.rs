@@ -3,7 +3,6 @@ extern crate crypto;
 extern crate rand;
 extern crate lzma;
 extern crate libc;
-extern crate acd;
 extern crate tempdir;
 extern crate rusqlite;
 #[macro_use]

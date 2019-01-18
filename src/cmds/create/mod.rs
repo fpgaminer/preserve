@@ -1,3 +1,4 @@
+use rusqlite::types::ToSql;
 use keystore::{KeyStore, Secret};
 use std::fs;
 use std::io::{Read, BufReader};
@@ -186,10 +187,10 @@ impl<'a> ArchiveBuilder<'a> {
 			mtime_nsec INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			blocks TEXT NOT NULL
-		)", &[]));
+		)", rusqlite::NO_PARAMS));
 
-		try!(db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", &[]));
-		try!(db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", &[]));
+		try!(db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", rusqlite::NO_PARAMS));
+		try!(db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", rusqlite::NO_PARAMS));
 
 		Ok(db)
 	}
@@ -524,7 +525,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 	};
 
 	// Check to see if we have this file in the cache
-	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path_str.to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
+	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
 		row.get(0)
 	});
 
@@ -613,7 +614,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		};
 
 		let blocks_str = blocks.join("\n");
-		try!(cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned(), &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]));
+		try!(cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]));
 
 		return Ok(Some(blocks));
 	}

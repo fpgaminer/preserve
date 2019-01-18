@@ -427,7 +427,7 @@ fn compare_dirs<P: AsRef<Path>, Q: AsRef<Path>>(path1: P, path2: Q) -> Result<()
 
 	let mut same = true;
 
-	same &= output_lines.next().unwrap_or("x") == "sending incremental file list";
+	same &= output_lines.next().unwrap_or("x").contains("file list");
 	same &= match output_lines.next().unwrap_or("x") {
 		".d..t...... ./" => output_lines.next().unwrap_or("x") == "",
 		"" => true,

@@ -12,17 +12,13 @@ clap = "2.5.1"
 libc = "^0.2"
 log = "0.3.6"
 rand = "^0.3"
-rusqlite = "^0.6"
+rusqlite = "0.16.0"
 rust-crypto = "^0.2"
 rust-lzma = "^0.2"
 rustc-serialize = "^0.3"
 tempdir = "^0.3"
 time = "0.1.35"
-url = "1.1.1"
-
-[dependencies.rust-acd]
-git = "https://github.com/fpgaminer/rust-acd.git"
-optional = false
+url = "1.7"
 
 [profile]
 

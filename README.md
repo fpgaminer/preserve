@@ -22,8 +22,6 @@ I am actively developing this project, so it is not stable or ready for general 
 
    This will create a backup of everything inside `/home/me/`, the backup will be called something like `my-backup-2016-02-25_11-56-51`, the backup will be stored in the filesystem at `/path/to/my/backups`.  To take advantage of deduplication you should store all your backups in the same place.  If you backup multiple machines, you could use an external drive or NAS.  If you use the same keyfile for all machines then Preserve will dedup across all machines.
 
-   Amazon Cloud Drive is also supported as a backend using `--backend acd`.  Setup instructions for ACD are forthcoming.
-
 3. List backups
 
    ```
