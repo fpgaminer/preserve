@@ -24,6 +24,7 @@ pub fn execute(args: &ArgMatches) {
 	let target_directory = Path::new(args.value_of("PATH").expect("internal error"));
 
 	config.dereference_symlinks = args.is_present("dereference");
+	config.one_file_system = args.is_present("one-file-system");
 
 	if backup_name.as_bytes().len() >= 128 {
 		error!("Backup name must be less than 128 bytes (UTF-8)");
@@ -112,10 +113,10 @@ pub fn execute(args: &ArgMatches) {
 struct Config {
 	/// If true, follow symlinks.
 	/// If false, symlinks are saved as symlinks in the archive.
-	pub dereference_symlinks: bool,
+	dereference_symlinks: bool,
 	/// If true, we will skip all files/directories that reside on other filesystems.
 	/// This is on by default, and useful to ignore /dev and others like it when backing up /.
-	pub one_file_system: bool,
+	one_file_system: bool,
 }
 
 /// Used to uniquely identify a file during backup creation, so we can
@@ -202,7 +203,7 @@ impl<'a> ArchiveBuilder<'a> {
 
 		let base_path = self.base_path.clone();
 		let base_path_metadata = try!(self.base_path.metadata());
-		let current_filesystem = Some(base_path_metadata.dev());
+		let current_filesystem = if self.config.one_file_system { Some(base_path_metadata.dev()) } else { None };
 		let mut unscanned_paths: Vec<PathBuf> = Vec::new();
 
 		unscanned_paths.extend(self.list_file_children(&base_path));

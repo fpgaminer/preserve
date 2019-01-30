@@ -46,6 +46,7 @@ fn main() {
 								"--keyfile=<KEYFILE>  'Sets the keyfile to use'
 								 --backend=<BACKEND>  'Sets the backend to use'
 								 --dereference        'Follow symlinks'
+								 --one-file-system    'Ignore things on other filesystems'
 								 <NAME>               'Unique name for this backup'
 								 <PATH>               'The path to backup'")
 						)
