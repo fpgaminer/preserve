@@ -8,7 +8,7 @@ use std::os::unix::fs::MetadataExt;
 use rustc_serialize::hex::{ToHex, FromHex};
 use std::string::ToString;
 use backend::{self, Backend};
-use archive::{Archive, File};
+use archive::{self, Archive};
 use rusqlite;
 use std::collections::{HashSet, HashMap};
 use std::env;
@@ -114,8 +114,8 @@ struct Config {
 	/// If true, follow symlinks.
 	/// If false, symlinks are saved as symlinks in the archive.
 	dereference_symlinks: bool,
+
 	/// If true, we will skip all files/directories that reside on other filesystems.
-	/// This is on by default, and useful to ignore /dev and others like it when backing up /.
 	one_file_system: bool,
 }
 
@@ -141,7 +141,7 @@ struct HardLink {
 
 // Wrap File so we can keep track of a few extra things while building the archive
 struct ArchiveBuilderFile {
-	file: File,
+	file: archive::File,
 	missing: bool,
 	canonical_path: Option<PathBuf>,
 }
@@ -206,7 +206,7 @@ impl<'a> ArchiveBuilder<'a> {
 		let current_filesystem = if self.config.one_file_system { Some(base_path_metadata.dev()) } else { None };
 		let mut unscanned_paths: Vec<PathBuf> = Vec::new();
 
-		unscanned_paths.extend(self.list_file_children(&base_path));
+		unscanned_paths.extend(self.list_directory_children(&base_path));
 
 		while let Some(path) = unscanned_paths.pop() {
 			let file = match self.read_file_metadata(path, current_filesystem) {
@@ -215,7 +215,7 @@ impl<'a> ArchiveBuilder<'a> {
 			};
 
 			if file.file.symlink.is_none() && file.file.is_dir {
-				unscanned_paths.extend(self.list_file_children(base_path.join(&file.file.path)));
+				unscanned_paths.extend(self.list_directory_children(base_path.join(&file.file.path)));
 			}
 
 			self.total_size += file.file.size;
@@ -226,11 +226,7 @@ impl<'a> ArchiveBuilder<'a> {
 	}
 
 	fn create_archive(&self, name: &str) -> Result<Archive> {
-		let mut files = Vec::new();
-
-		for file in &self.files {
-			files.push(file.file.clone());
-		}
+		let files: Vec<archive::File> = self.files.iter().map(|file| file.file.clone()).collect();
 
 		Ok(Archive {
 			version: 0x00000001,
@@ -257,6 +253,10 @@ impl<'a> ArchiveBuilder<'a> {
 				warn!("'{}' is being skipped because of --one-file-system.", path.as_ref().display());
 				return None
 			}
+		}
+
+		if self.should_ignore(&symlink_metadata) {
+			return None;
 		}
 
 		// If we encounter a symlink, and we aren't dereferencing, then we will
@@ -363,7 +363,7 @@ impl<'a> ArchiveBuilder<'a> {
 		};
 
 		Some(ArchiveBuilderFile {
-			file: File {
+			file: archive::File {
 				path: filepath,
 				is_dir: metadata.is_dir(),
 				symlink: symlink_path,
@@ -382,8 +382,8 @@ impl<'a> ArchiveBuilder<'a> {
 	}
 
 	/// Assuming that path is a directory, this function returns a list of
-	/// all files inside that directory.
-	fn list_file_children<P: AsRef<Path>>(&mut self, path: P) -> Vec<PathBuf> {
+	/// all entries inside that directory.
+	fn list_directory_children<P: AsRef<Path>>(&mut self, path: P) -> Vec<PathBuf> {
 		let mut children = Vec::new();
 
 		let entries = match path.as_ref().read_dir() {
