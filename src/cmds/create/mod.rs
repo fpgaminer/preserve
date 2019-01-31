@@ -22,6 +22,7 @@ pub fn execute(args: &ArgMatches) {
 	let args_backend = args.value_of("backend").expect("internal error");
 	let backup_name = args.value_of("NAME").expect("internal error");
 	let target_directory = Path::new(args.value_of("PATH").expect("internal error"));
+	let exclude_paths: Vec<&str> = args.values_of("exclude").unwrap_or(clap::Values::default()).collect();
 
 	config.dereference_symlinks = args.is_present("dereference");
 	config.one_file_system = args.is_present("one-file-system");
@@ -58,6 +59,12 @@ pub fn execute(args: &ArgMatches) {
 				return;
 			},
 		};
+
+		// Add user specified excludes
+		for path in exclude_paths {
+			builder.path_ignore_list.insert(PathBuf::from(path));
+		}
+
 		info!("Gathering list of files...");
 		match builder.walk() {
 			Ok(_) => (),
@@ -152,7 +159,11 @@ struct ArchiveBuilder<'a> {
 	hardlink_map: HashMap<FileIdentifier, HardLink>,
 	last_hardlink_id: u64,
 	total_size: u64,
-	ignore_list: HashSet<FileIdentifier>,
+	/// Any filesystem entries with a matching devid+inode will be ignored.
+	inode_ignore_list: HashSet<FileIdentifier>,
+	/// Any filesystem entries with a matching path will be ignored.
+	/// Currently only checks directories.
+	path_ignore_list: HashSet<PathBuf>,
 	files: Vec<ArchiveBuilderFile>,
 	backend: &'a mut Backend,
 	block_store: &'a BlockStore<'a>,
@@ -166,16 +177,36 @@ impl<'a> ArchiveBuilder<'a> {
 			PathBuf::from(base_path.as_ref())
 		};
 
+		let mut inode_ignore_list = HashSet::new();
+
+		// Don't archive our cache file
+		if let Ok(metadata) = Path::new("cache.sqlite").metadata() {
+			inode_ignore_list.insert(FileIdentifier {
+				devid: metadata.dev(),
+				inode: metadata.ino(),
+			});
+		}
+
+		let mut path_ignore_list = HashSet::new();
+
+		// TODO: Make it possible to disable these with a command line flag
+		path_ignore_list.insert(PathBuf::from("/proc"));
+		path_ignore_list.insert(PathBuf::from("/sys"));
+		path_ignore_list.insert(PathBuf::from("/dev"));
+		path_ignore_list.insert(PathBuf::from("/run"));
+		path_ignore_list.insert(PathBuf::from("/tmp"));
+
 		Ok(ArchiveBuilder {
-			config: config,
-			base_path: base_path,
+			config,
+			base_path,
 			hardlink_map: HashMap::new(),
 			total_size: 0,
 			last_hardlink_id: 0,
-			ignore_list: HashSet::new(),
+			inode_ignore_list,
+			path_ignore_list,
 			files: Vec::new(),
-			backend: backend,
-			block_store: block_store,
+			backend,
+			block_store,
 		})
 	}
 
@@ -255,7 +286,8 @@ impl<'a> ArchiveBuilder<'a> {
 			}
 		}
 
-		if self.should_ignore(&symlink_metadata) {
+		if self.should_ignore(&symlink_metadata, path.as_ref()) {
+			warn!("'{}' is being skipped because it is ignored.", path.as_ref().display());
 			return None;
 		}
 
@@ -300,7 +332,8 @@ impl<'a> ArchiveBuilder<'a> {
 			}
 		}
 
-		if self.should_ignore(&metadata) {
+		if self.should_ignore(&metadata, path.as_ref()) {
+			warn!("'{}' is being skipped because it is ignored.", path.as_ref().display());
 			return None;
 		}
 
@@ -410,13 +443,17 @@ impl<'a> ArchiveBuilder<'a> {
 	}
 
 	/// Determine if the given path should be ignored, given the settings.
-	fn should_ignore(&self, metadata: &fs::Metadata) -> bool {
+	fn should_ignore<P: AsRef<Path>>(&self, metadata: &fs::Metadata, path: P) -> bool {
 		let identifier = FileIdentifier {
 			devid: metadata.dev(),
 			inode: metadata.ino(),
 		};
 
-		if self.ignore_list.contains(&identifier) {
+		if self.inode_ignore_list.contains(&identifier) {
+			return true;
+		}
+
+		if metadata.is_dir() && self.path_ignore_list.contains(path.as_ref()) {
 			return true;
 		}
 

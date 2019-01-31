@@ -423,8 +423,37 @@ fn compare_dirs<P: AsRef<Path>, Q: AsRef<Path>>(path1: P, path2: Q) -> Result<()
 		.output().unwrap();
 
 	let output = String::from_utf8_lossy(&output.stdout);
-	let mut output_lines = output.lines();
+	let same = parse_rsync_output(&output);
 
+	if same {
+		Ok(())
+	} else {
+		Err(output.to_string())
+	}
+}
+
+// Parses rsync's output to determine if the two paths are the same (no meaningful differnce).
+// Returns true if they are the same.
+#[cfg(target_os = "macos")]
+fn parse_rsync_output(output: &str) -> bool {
+	let mut output_lines = output.lines();
+	let mut same = true;
+
+	same &= output_lines.next().unwrap_or("x").contains("file list");
+	same &= match output_lines.next().unwrap_or("x") {
+		".d..t.... ./" => output_lines.next().unwrap_or("x") == "",
+		"" => true,
+		_ => false,
+	};
+	same &= output_lines.next().unwrap_or("x").starts_with("sent ");
+	same &= output_lines.next().unwrap_or("x").starts_with("total ");
+
+	same
+}
+
+#[cfg(target_os = "linux")]
+fn parse_rsync_output(output: &str) -> bool {
+	let mut output_lines = output.lines();
 	let mut same = true;
 
 	same &= output_lines.next().unwrap_or("x").contains("file list");
@@ -436,11 +465,7 @@ fn compare_dirs<P: AsRef<Path>, Q: AsRef<Path>>(path1: P, path2: Q) -> Result<()
 	same &= output_lines.next().unwrap_or("x").starts_with("sent ");
 	same &= output_lines.next().unwrap_or("x").starts_with("total ");
 
-	if same {
-		Ok(())
-	} else {
-		Err(output.to_string())
-	}
+	same
 }
 
 // We use temporary directories for everything, so in the case of failure save the directories

@@ -2,14 +2,12 @@ This test suite uses Docker containers to do integration testing of Preserve.  T
 
 
 How it works:
-	* Two docker images are created, one for backup and one for restore.
-	* The backup image is run with a "backup" volume mounted.
-	* The backup image backs up the system, storing Preserve's backup data in the "backup" volume.
-	* The backup image also installs some packages, backs up again, and does other things to simulate a real use case.
-	* The restore image is run with the same "backup" volume mounted and a "restore" volume.
-	* The restore image restores the latest backup to the "restore" volume.
-	* Now we can compare the state of the filesystem on the backup container versus the state of the filesystem in the "restore" volume.  They should match, outside of expected variation (e.g. /dev isn't backed up).
+	* A docker image is created with preserve on it.
+	* The image is run, backing up the system, storing the backup to a "backup" volume.  It also installs some packages, backs up again, etc.
+	* The image is run again with the same "backup" volume mounted, but performs a restore.
+	* The restore container restores the latest backup and compares the result against the filesystem state of the backup container.
+	* They restored filesystem and the backup container's filesystem should match, outside of expected variation (e.g. /dev isn't backed up).
 
 
 How to test:
-	Run `test.sh` and ensure that when it prints "---------- DIFF ----------" that the diff is empty.
+	Run `test.py` and ensure that when it prints "---------- DIFF ----------" that the diff is empty.

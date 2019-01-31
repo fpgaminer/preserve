@@ -24,7 +24,7 @@ mod error;
 
 use logger::Logger;
 use log::LogLevelFilter;
-use clap::{App, AppSettings, SubCommand};
+use clap::{App, AppSettings, SubCommand, Arg};
 
 
 fn main() {
@@ -49,6 +49,14 @@ fn main() {
 								 --one-file-system    'Ignore things on other filesystems'
 								 <NAME>               'Unique name for this backup'
 								 <PATH>               'The path to backup'")
+							.arg(
+								Arg::with_name("exclude")
+									.long("exclude")
+									.takes_value(true)
+									.multiple(true)
+									.number_of_values(1)
+									.help("Exclude the given path")
+							)
 						)
 						.subcommand(SubCommand::with_name("keygen")
 							.about("create a new keyfile")
