@@ -39,14 +39,14 @@ new_type!{
 
 #[derive(RustcDecodable, RustcEncodable)]
 struct EncryptionKey {
-	pub key: ChaCha20Key,
-	pub nonce: ChaCha20Nonce,
+	key: ChaCha20Key,
+	nonce: ChaCha20Nonce,
 }
 
 #[derive(RustcDecodable, RustcEncodable, PartialEq, Debug)]
-pub struct KdfKey {
-	pub key_key: HmacKey,
-	pub nonce_key: HmacKey,
+struct KdfKey {
+	key_key: HmacKey,
+	nonce_key: HmacKey,
 }
 
 new_type!{
@@ -69,30 +69,30 @@ pub struct EncryptedArchive(pub Vec<u8>);
 #[derive(RustcDecodable, RustcEncodable, PartialEq, Debug)]
 pub struct KeyStore {
 	/// Used to calculate the block secret from a block's plaintext.
-	pub block_secret_key: HmacKey,
+	block_secret_key: HmacKey,
 	/// Used to calculate the block's id from the secret
-	pub block_id_key: HmacKey,
+	block_id_key: HmacKey,
 	/// Used to calculate the encryption key from secret
-	pub block_kdf_key: KdfKey,
+	block_kdf_key: KdfKey,
 	/// Used to calculate the HMAC of an encrypted block
-	pub block_hmac_key: HmacKey,
+	block_hmac_key: HmacKey,
 
 	// TODO: This should be kept encrypted
 	/// Curve25519 private key; used to decrypt archives
-	pub archive_private_key: Curve25519PrivateKey,
+	archive_private_key: Curve25519PrivateKey,
 	/// Curve25519 public key; used to encrypt archives
-	pub archive_public_key: Curve25519PublicKey,
+	archive_public_key: Curve25519PublicKey,
 	/// Used to calculate encryption key from Curve25519 shared secret
-	pub archive_kdf_key: KdfKey,
+	archive_kdf_key: KdfKey,
 	/// Used to calculate MAC of encrypted archives
-	pub archive_hmac_key: HmacKey,
+	archive_hmac_key: HmacKey,
 
 	/// Used to calculate archive id
-	pub archive_name_id_key: HmacKey,
+	archive_name_id_key: HmacKey,
 	/// Used to calculate the archive name encryption key from the archive id
-	pub archive_name_kdf_key: KdfKey,
+	archive_name_kdf_key: KdfKey,
 	/// Used to calculate the HMAC of the encrypted archive name
-	pub archive_name_hmac_key: HmacKey,
+	archive_name_hmac_key: HmacKey,
 }
 
 
