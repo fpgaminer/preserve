@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::io::{Write, BufWriter};
 use tempdir::TempDir;
 use rand::{Rng, ChaChaRng};
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::cmp;
 use std::os::unix;
 
@@ -201,36 +201,35 @@ impl TestGenerator {
 			for _ in 0..num_nodes_to_generate {
 				let filename = self.generate_random_name();
 				let path = parent.join(filename);
+				let dice = self.rng.next_f32();
 
-				match self.rng.next_f32() {
-					// File
-					0.0...0.5 => {
-						self.generate_random_file(&path);
+				if dice < 0.5 {
+					// File: 50%
+					self.generate_random_file(&path);
 
-						if path.metadata().unwrap().len() == 0 {
-							number_of_empty_files += 1;
-						}
+					if path.metadata().unwrap().len() == 0 {
+						number_of_empty_files += 1;
+					}
 
-						all_files.push(path);
-					},
-					// Folder
-					0.5...0.8 => {
-						self.generate_random_folder(&path);
-						all_folders.push(path.clone());
-						tasks.push(path.clone());
-					},
-					// Symlink
-					0.8...0.9 => {
-						self.generate_random_symlink(&path, &all_files, &all_folders);
-						number_of_symlinks += 1;
-					},
-					// Hardlink
-					_ => {
-						if self.generate_random_hardlink(&path, &all_files) {
-							number_of_hardlinks += 1;
-						}
-					},
-				};
+					all_files.push(path);
+				}
+				else if dice < 0.8 {
+					// Folder: 30%
+					self.generate_random_folder(&path);
+					all_folders.push(path.clone());
+					tasks.push(path.clone());
+				}
+				else if dice < 0.9 {
+					// Symlink: 10%
+					self.generate_random_symlink(&path, &all_files, &all_folders);
+					number_of_symlinks += 1;
+				}
+				else {
+					// Hardlink: 10%
+					if self.generate_random_hardlink(&path, &all_files) {
+						number_of_hardlinks += 1;
+					}
+				}
 			}
 
 			// If our minimum requirements for the test case have not been met, then try again.
@@ -282,11 +281,15 @@ impl TestGenerator {
 	// Length, contents, permissions, etc. will be random.
 	fn generate_random_file<P: AsRef<Path>>(&mut self, path: P) {
 		let mode = (self.rng.next_u32() & 511) | 0o600;
-		let len = match self.rng.next_f32() {
-			0.0...0.1 => 0, // Empty (10%)
-			0.1...0.6 => self.rng.gen_range(1, 1024), // Small
-			0.6...0.9 => self.rng.gen_range(1, 2*1024*1024), // Medium
-			_ => self.rng.gen_range(1, 32*1024*1024), // Large
+		let dice = self.rng.next_f32();
+		let len = if dice <= 0.1 {
+			0 // Empty (10%)
+		} else if dice <= 0.6 {
+			self.rng.gen_range(1, 1024) // Small (50%)
+		} else if dice <= 0.9 {
+			self.rng.gen_range(1, 2*1024*1024) // Medium (30%)
+		} else {
+			self.rng.gen_range(1, 32*1024*1024) // Large (10%)
 		};
 
 		{
