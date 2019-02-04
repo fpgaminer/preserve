@@ -23,3 +23,4 @@
  * Split chunks using a rolling hash
  * Rename "current_filesystem" variable in create code; generally re-work how one-file-system works
  * The help message for "--exclude" says that it is a required option ... which isn't true.  Something weird with clap.
+ * Maybe use the flexi_logger crate instead of our custom logger?

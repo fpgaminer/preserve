@@ -23,7 +23,6 @@ mod logger;
 mod error;
 
 use logger::Logger;
-use log::LogLevelFilter;
 use clap::{App, AppSettings, SubCommand, Arg};
 
 
@@ -96,7 +95,7 @@ fn main() {
 						)
 						.get_matches();
 
-	Logger::init(LogLevelFilter::Info, matches.value_of("logfile"));
+	Logger::init(log::LevelFilter::Info, matches.value_of("logfile"));
 
 	match matches.subcommand() {
 		("create", Some(sub_m)) => cmds::create::execute(sub_m),
