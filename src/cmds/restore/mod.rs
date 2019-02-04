@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use rustc_serialize::hex::FromHex;
 use backend::{self, Backend};
 use archive::{Archive, File};
-use tempdir::TempDir;
 use clap::ArgMatches;
 use error::*;
 
@@ -110,7 +109,7 @@ pub fn execute(args: &ArgMatches) {
 		return;
 	}
 
-	let download_cache_dir = match TempDir::new("preserve-") {
+	let download_cache_dir = match tempfile::Builder::new().prefix("preserve-").tempdir() {
 		Ok(dir) => dir,
 		Err(err) => {
 			error!("There was a problem creating a temporary directory: {}", err);

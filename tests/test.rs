@@ -1,4 +1,4 @@
-extern crate tempdir;
+extern crate tempfile;
 extern crate rand;
 extern crate libc;
 
@@ -6,7 +6,7 @@ use std::process::Command;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::io::{Write, BufWriter};
-use tempdir::TempDir;
+use tempfile::TempDir;
 use rand::{Rng, ChaChaRng};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::cmp;
@@ -15,8 +15,8 @@ use std::os::unix;
 
 #[test]
 fn integration_test_1() {
-	let working_dir = TempDir::new("preserve-test").unwrap();
-	let backend_dir = TempDir::new("preserve-test").unwrap();
+	let working_dir = tempfile::Builder::new().prefix("preserve-test").tempdir().unwrap();
+	let backend_dir = tempfile::Builder::new().prefix("preserve-test").tempdir().unwrap();
 
 	let test_config = TestConfig {
 		bin: Path::new("target/debug/preserve").canonicalize().unwrap(),
@@ -102,9 +102,7 @@ fn dump_test_case() {
 	let original_dir = TestGenerator::new().generate_test_case();
 
 	// Save the test case
-	let random_str: String = rand::thread_rng().gen_ascii_chars().take(10).collect();
-	let path = Path::new("/tmp").join("preserve-testcase-".to_string() + &random_str);
-	fs::rename(original_dir.path(), path).unwrap();
+	panic!("Saved to: {:?}", original_dir.into_path());
 }
 
 
@@ -140,7 +138,7 @@ impl TestConfig {
 	}
 
 	pub fn restore(&self, backup_name: &str) -> TempDir {
-		let restore_dir = TempDir::new("preserve-test").unwrap();
+		let restore_dir = tempfile::Builder::new().prefix("preserve-test").tempdir().unwrap();
 
 		let output = Command::new(&self.bin)
 			.current_dir(&self.working_dir)
@@ -180,7 +178,7 @@ impl TestGenerator {
 	// Each generated folder is then recursively filled the same way.
 	// TODO: Add requiment for bad symlinks
 	fn generate_test_case(&mut self) -> TempDir {
-		let basepath = TempDir::new("preserve-test").unwrap();
+		let basepath = tempfile::Builder::new().prefix("preserve-test").tempdir().unwrap();
 		let mut number_of_symlinks = 0;
 		let mut number_of_hardlinks = 0;
 		let mut number_of_empty_files = 0;

@@ -16,7 +16,7 @@ rusqlite = "0.16.0"
 rust-crypto = "^0.2"
 rust-lzma = "0.4"
 rustc-serialize = "^0.3"
-tempdir = "^0.3"
+tempfile = "3"
 time = "0.1.35"
 url = "1.7"
 
