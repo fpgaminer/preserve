@@ -292,6 +292,9 @@ impl TestGenerator {
 			self.rng.gen_range(1, 32*1024*1024) // Large (10%)
 		};
 
+		// Generate ascii data sometimes
+		let is_ascii = self.rng.gen_range(0, 2) == 0;
+
 		{
 			let file = fs::OpenOptions::new().write(true).create(true).mode(mode).open(path.as_ref()).unwrap();
 			let mut writer = BufWriter::new(file);
@@ -301,9 +304,16 @@ impl TestGenerator {
 			while written < len {
 				let chunk_size = cmp::min(buffer.len(), len - written);
 
-				self.rng.fill_bytes(&mut buffer);
-				writer.write_all(&buffer[..chunk_size]).unwrap();
-				written += chunk_size;
+				if is_ascii {
+					let string_data: String = self.rng.gen_ascii_chars().take(chunk_size).collect();
+					writer.write_all(string_data.as_bytes()).unwrap();
+					written += string_data.len();
+				}
+				else {
+					self.rng.fill_bytes(&mut buffer);
+					writer.write_all(&buffer[..chunk_size]).unwrap();
+					written += chunk_size;
+				}
 			}
 		}
 
