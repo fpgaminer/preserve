@@ -14,7 +14,7 @@ log = { version = "0.4", features = ["std"] }
 rand = "^0.3"
 rusqlite = "0.16.0"
 rust-crypto = "^0.2"
-rust-lzma = "^0.2"
+rust-lzma = "0.4"
 rustc-serialize = "^0.3"
 tempdir = "^0.3"
 time = "0.1.35"
