@@ -1,6 +1,5 @@
 use std::error::Error as StdError;
 use std::io::Error as IoError;
-use rustc_serialize::json::DecoderError as JsonDecoderError;
 use rusqlite::Error as SqliteError;
 use std::fmt;
 use self::Error::*;
@@ -12,8 +11,8 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 pub enum Error {
 	/// I/O error
 	Io(IoError),
-	/// Error from JSON decoder
-	JsonDecoder(JsonDecoderError),
+	/// Error from JSON encoder/decoder
+	Json(serde_json::Error),
 	/// Bad Backend Path
 	BadBackendPath(String),
 	ArchiveNameTooLong,
@@ -21,9 +20,7 @@ pub enum Error {
 	CorruptArchiveTruncated,
 	CorruptArchiveBadHmac,
 	CorruptArchiveFailedDecompression,
-	CorruptArchiveNotUtf8,
 	CorruptArchiveBadJson,
-	CorruptArchiveBadBlockSecret,
 	CorruptBlock,
 	ArchiveNameConflict,
 	BlockNotFound,
@@ -43,14 +40,13 @@ impl StdError for Error {
 	fn description(&self) -> &str {
 		match *self {
 			Io(ref e) => e.description(),
-			JsonDecoder(_) => "Invalid JSON",
+			Json(_) => "Invalid JSON",
 			BadBackendPath(ref e) => e,
 			ArchiveNameTooLong => "The archive name must be <= 127 bytes (UTF-8)",
 			CorruptArchiveName => "The encrypted archive name is corrupted",
 			CorruptArchiveTruncated => "The encrypted archive is corrupted: Truncated",
 			CorruptArchiveBadHmac => "The encrypted archive is corrupt: Bad Hmac",
 			CorruptArchiveFailedDecompression => "The encrypted archive is corrupt: could not be decompressed",
-			CorruptArchiveNotUtf8 => "The encrypted archive is corrupt: data is not UTF-8",
 			CorruptArchiveBadJson => "The encrypted archive is corrupt: the internal JSON data is invalid",
 			CorruptBlock => "The encrypted block is corrupted",
 			BlockNotFound => "The specified block was not found",
@@ -59,21 +55,19 @@ impl StdError for Error {
 			ArchiveNameConflict => "An archive with that name already exists",
 			BackendOnDifferentDevices => "All folders in the backend must be on the same drive",
 			Sqlite(ref e) => e.description(),
-			CorruptArchiveBadBlockSecret => "The archive is corrupted.  One of the block secrets could not be parsed",
 		}
 	}
 
 	fn cause(&self) -> Option<&StdError> {
 		match *self {
 			Io(ref error) => Some(error),
-			JsonDecoder(ref error) => Some(error),
+			Json(ref error) => Some(error),
 			BadBackendPath(_) => None,
 			ArchiveNameTooLong => None,
 			CorruptArchiveName => None,
 			CorruptArchiveTruncated => None,
 			CorruptArchiveBadHmac => None,
 			CorruptArchiveFailedDecompression => None,
-			CorruptArchiveNotUtf8 => None,
 			CorruptArchiveBadJson => None,
 			CorruptBlock => None,
 			ArchiveNameConflict => None,
@@ -82,7 +76,6 @@ impl StdError for Error {
 			ArchiveNotFound => None,
 			BackendOnDifferentDevices => None,
 			Sqlite(ref error) => Some(error),
-			CorruptArchiveBadBlockSecret => None,
 		}
 	}
 }
@@ -93,9 +86,9 @@ impl From<IoError> for Error {
 	}
 }
 
-impl From<JsonDecoderError> for Error {
-	fn from(err: JsonDecoderError) -> Error {
-		JsonDecoder(err)
+impl From<serde_json::Error> for Error {
+	fn from(err: serde_json::Error) -> Error {
+		Json(err)
 	}
 }
 

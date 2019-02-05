@@ -1,4 +1,7 @@
-extern crate rustc_serialize;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate serde_json;
 extern crate crypto;
 extern crate rand;
 extern crate lzma;
@@ -11,6 +14,7 @@ extern crate time;
 #[macro_use]
 extern crate clap;
 extern crate url;
+extern crate data_encoding;
 
 #[macro_use]
 pub mod newtype_macros;

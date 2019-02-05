@@ -1,8 +1,5 @@
-use rustc_serialize::json;
-use rustc_serialize;
 use rand::{OsRng, Rng};
 use std::io::{self, BufReader};
-use rustc_serialize::hex::{ToHex, FromHex};
 use crypto;
 use crypto::chacha20::ChaCha20;
 use crypto::hmac::Hmac;
@@ -10,11 +7,11 @@ use crypto::sha2::Sha256;
 use crypto::mac::{Mac, MacResult};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::curve25519;
-use rustc_serialize::base64::{self, ToBase64, FromBase64, FromBase64Error};
 use std::str::FromStr;
 use error::*;
 use std::path::Path;
 use std::fs;
+use data_encoding::{BASE64URL, HEXLOWER_PERMISSIVE};
 
 
 new_type!{
@@ -37,13 +34,13 @@ new_type!{
 	secret ChaCha20Nonce(8);
 }
 
-#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Serialize, Deserialize)]
 struct EncryptionKey {
 	key: ChaCha20Key,
 	nonce: ChaCha20Nonce,
 }
 
-#[derive(RustcDecodable, RustcEncodable, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 struct KdfKey {
 	key_key: HmacKey,
 	nonce_key: HmacKey,
@@ -51,6 +48,13 @@ struct KdfKey {
 
 new_type!{
 	secret Secret(32);
+}
+
+// TODO: Restore and Verify need this implementation.  Not too keen on having it ... is there a better way?
+impl std::hash::Hash for Secret {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+		std::hash::Hash::hash(&self.0[..], state)
+	}
 }
 
 new_type!{
@@ -66,7 +70,7 @@ pub struct EncryptedArchive(pub Vec<u8>);
 // We use lots of keying data because it's cheap to do so, adds lots of entropy to the system,
 // and provides extra layers of protection in case a key is accidentally leaked or improperly
 // used.
-#[derive(RustcDecodable, RustcEncodable, PartialEq, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct KeyStore {
 	/// Used to calculate the block secret from a block's plaintext.
 	block_secret_key: HmacKey,
@@ -128,15 +132,12 @@ impl KeyStore {
 		}
 	}
 
-	pub fn save<W: io::Write>(&self, writer: &mut W) -> Result<()> {
-		try!(write!(writer, "{}", json::as_pretty_json(&self)));
-		Ok(())
+	pub fn save<W: io::Write>(&self, writer: W) -> Result<()> {
+		Ok(serde_json::to_writer_pretty(writer, &self)?)
 	}
 
-	pub fn load<R: io::Read>(reader: &mut R) -> Result<KeyStore> {
-		let mut data = String::new();
-		try!(reader.read_to_string(&mut data));
-		Ok(try!(json::decode(&data)))
+	pub fn load<R: io::Read>(reader: R) -> Result<KeyStore> {
+		Ok(serde_json::from_reader(reader)?)
 	}
 
 	pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<KeyStore> {
@@ -322,21 +323,16 @@ impl ToString for EncryptedArchiveName {
 	fn to_string(&self) -> String {
 		let &EncryptedArchiveName(ref payload) = self;
 
-		payload[..].to_base64(base64::Config {
-			char_set: base64::CharacterSet::UrlSafe,
-			newline: base64::Newline::LF,
-			pad: true,
-			line_length: None,
-		})
+		BASE64URL.encode(payload)
 	}
 }
 
 
 impl FromStr for EncryptedArchiveName {
-	type Err = FromBase64Error;
+	type Err = data_encoding::DecodeError;
 
 	fn from_str(s: &str) -> ::std::result::Result<EncryptedArchiveName, Self::Err> {
-		Ok(EncryptedArchiveName(try!(s.from_base64())))
+		Ok(EncryptedArchiveName(BASE64URL.decode(s.as_bytes())?))
 	}
 }
 
@@ -345,7 +341,7 @@ impl ToString for BlockId {
 	fn to_string(&self) -> String {
 		let &BlockId(ref id) = self;
 
-		id.to_hex().to_lowercase()
+		HEXLOWER_PERMISSIVE.encode(id)
 	}
 }
 
@@ -376,20 +372,19 @@ fn encrypt(key: &EncryptionKey, data: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod test {
 	use super::{HmacKey, KdfKey, Secret, ChaCha20Key, ChaCha20Nonce, EncryptionKey, KeyStore, EncryptedArchiveName, EncryptedArchive, BlockId, EncryptedBlock, hmac, kdf, encrypt};
-	use rustc_serialize::hex::FromHex;
-	use rustc_serialize::json;
 	use crypto::mac::MacResult;
 	use std::io::Cursor;
 	use crypto::curve25519::{curve25519_base};
 	use std::str::FromStr;
+	use data_encoding::HEXLOWER_PERMISSIVE;
 
 
 	#[test]
 	fn test_hmac() {
 		// Test vector generated manually using Python
-		let key = HmacKey::from_slice(&"ffb5dcc86e1eb427a405d9a038e8db18f6e1ff0f335288143f77f708e2c7f524fca279a5242e616b45c28913356575768d0077d51ab8550f5264a0368def5f0a".from_hex().unwrap()).unwrap();
-		let data = "896af71f4f51c8a6dc32357d407a01d15fdc5fd05b2c73d9c4c5e5bd14cae7c58661fcfe39da38ac0a956befec7fc3fe437f5243acbfe8d0412cbe7fa3c1547ff91764cb5be8ade347386bfd630a5fae08c139cd2fc58fb11542e56d94817f44bc79b40ba4fef1c8ee7709c77ab2399d8419fe8017439da3".from_hex().unwrap();
-		let expected = "9d4e17e1d5842c289a78c03da7218e85683c5842d6f4367dd2fab79da1d0464b".from_hex().unwrap();
+		let key = HmacKey::from_slice(&HEXLOWER_PERMISSIVE.decode(b"ffb5dcc86e1eb427a405d9a038e8db18f6e1ff0f335288143f77f708e2c7f524fca279a5242e616b45c28913356575768d0077d51ab8550f5264a0368def5f0a").unwrap()).unwrap();
+		let data = HEXLOWER_PERMISSIVE.decode(b"896af71f4f51c8a6dc32357d407a01d15fdc5fd05b2c73d9c4c5e5bd14cae7c58661fcfe39da38ac0a956befec7fc3fe437f5243acbfe8d0412cbe7fa3c1547ff91764cb5be8ade347386bfd630a5fae08c139cd2fc58fb11542e56d94817f44bc79b40ba4fef1c8ee7709c77ab2399d8419fe8017439da3").unwrap();
+		let expected = HEXLOWER_PERMISSIVE.decode(b"9d4e17e1d5842c289a78c03da7218e85683c5842d6f4367dd2fab79da1d0464b").unwrap();
 
 		assert!(hmac(&key, &data) == MacResult::new(&expected));
 	}
@@ -398,12 +393,12 @@ mod test {
 	fn test_kdf() {
 		// Test vector generated manually using Python
 		let kdf_key = KdfKey {
-			key_key: HmacKey::from_slice(&"32fb9afd920064555d403ffd11bb4f37870c67bc30595cac6613bc9e8e46b50335b8bedc478757b8d148d064475e8124083b1c311e29411d491e087680844f01".from_hex().unwrap()).unwrap(),
-			nonce_key: HmacKey::from_slice(&"9fa40dbab494f0c154eef8f0dadf5e4df527d2972cacfd800002b6f8db7975942a2e6f35d7f394fcfe6ce3744bdb6f1f423a65fa7b6aab70e4f66e274e24261e".from_hex().unwrap()).unwrap(),
+			key_key: HmacKey::from_slice(&HEXLOWER_PERMISSIVE.decode(b"32fb9afd920064555d403ffd11bb4f37870c67bc30595cac6613bc9e8e46b50335b8bedc478757b8d148d064475e8124083b1c311e29411d491e087680844f01").unwrap()).unwrap(),
+			nonce_key: HmacKey::from_slice(&HEXLOWER_PERMISSIVE.decode(b"9fa40dbab494f0c154eef8f0dadf5e4df527d2972cacfd800002b6f8db7975942a2e6f35d7f394fcfe6ce3744bdb6f1f423a65fa7b6aab70e4f66e274e24261e").unwrap()).unwrap(),
 		};
-		let secret = Secret::from_slice(&"d0dbfab271e591ef9745e33b4a18edcac29513afd79cbba4fc8581037985128c".from_hex().unwrap()).unwrap();
-		let expected_key = ChaCha20Key::from_slice(&"8ec2bd8afb3c8fea1b7aa09f813c3df2488fd79c635111e2b7c490217759bef6".from_hex().unwrap()).unwrap();
-		let expected_nonce = ChaCha20Nonce::from_slice(&"7f73a2dae4d687a0".from_hex().unwrap()).unwrap();
+		let secret: Secret = serde_json::from_str("\"d0dbfab271e591ef9745e33b4a18edcac29513afd79cbba4fc8581037985128c\"").unwrap();
+		let expected_key = ChaCha20Key::from_slice(&HEXLOWER_PERMISSIVE.decode(b"8ec2bd8afb3c8fea1b7aa09f813c3df2488fd79c635111e2b7c490217759bef6").unwrap()).unwrap();
+		let expected_nonce = ChaCha20Nonce::from_slice(&HEXLOWER_PERMISSIVE.decode(b"7f73a2dae4d687a0").unwrap()).unwrap();
 		let output = kdf(&kdf_key, &secret);
 
 		assert_eq!(output.key, expected_key);
@@ -415,11 +410,11 @@ mod test {
 		// https://github.com/secworks/chacha_testvectors/blob/master/src/chacha_testvectors.txt
 		// with random data XOR'd in Python
 		let encryption_key = EncryptionKey {
-			key: ChaCha20Key::from_slice(&"00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100 ".from_hex().unwrap()).unwrap(),
-			nonce: ChaCha20Nonce::from_slice(&"0f1e2d3c4b5a6978".from_hex().unwrap()).unwrap(),
+			key: ChaCha20Key::from_slice(&HEXLOWER_PERMISSIVE.decode(b"00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100").unwrap()).unwrap(),
+			nonce: ChaCha20Nonce::from_slice(&HEXLOWER_PERMISSIVE.decode(b"0f1e2d3c4b5a6978").unwrap()).unwrap(),
 		};
-		let data = "aa8ba6688d21ace02dd33078a3b4bf36512ec1c5516dfee2465a4d81d84efec106f5acab2b9c3d14e19a23bd9d8935a720639bdea7f4e9ac2de69efbc17e95185f2b2fd12039".from_hex().unwrap();
-		let expected = "352652614d29bd3029e2e606586c308c080f4c9836654f34c3dc722a634068dfecbda37dd0cf16e9a8d102ec9cd962e51ad591bd59bbbc5b8ff47cedbdb42c29a4d6061e5bf8".from_hex().unwrap();
+		let data = HEXLOWER_PERMISSIVE.decode(b"aa8ba6688d21ace02dd33078a3b4bf36512ec1c5516dfee2465a4d81d84efec106f5acab2b9c3d14e19a23bd9d8935a720639bdea7f4e9ac2de69efbc17e95185f2b2fd12039").unwrap();
+		let expected = HEXLOWER_PERMISSIVE.decode(b"352652614d29bd3029e2e606586c308c080f4c9836654f34c3dc722a634068dfecbda37dd0cf16e9a8d102ec9cd962e51ad591bd59bbbc5b8ff47cedbdb42c29a4d6061e5bf8").unwrap();
 		let output = encrypt(&encryption_key, &data);
 
 		assert_eq!(output, expected);
@@ -454,7 +449,7 @@ mod test {
 	/// Test if the public key from the test vector is correct
 	#[test]
 	fn test_keystore_public_key() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
 		let output_public_key = curve25519_base(&keystore.archive_private_key[..]);
 
 		assert_eq!(output_public_key, keystore.archive_public_key[..]);
@@ -462,7 +457,7 @@ mod test {
 
 	#[test]
 	fn test_keystore_save_load() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
 		let mut buffer = vec![0u8; 0];
 
 		keystore.save(&mut buffer).unwrap();
@@ -473,7 +468,7 @@ mod test {
 
 	#[test]
 	fn test_encrypt_archive_name() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
 		let name = "(╯°□°）╯︵ ┻━┻";
 		let expected = "YuDnnmapCAOdv9RfpB77aVAln9NWgK9maOkpO4omqQvc9Dnng26-IH_qziHcxAMofqG1uGfMt2_Z4LkQdO_zXcmRn_6NY0FS3U_uSAGmudueq_r5H37QDYXQJIcV_A==";
 		let output = keystore.encrypt_archive_name(name).unwrap().to_string();
@@ -483,7 +478,7 @@ mod test {
 
 	#[test]
 	fn test_decrypt_archive_name() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
 		let name = "YuDnnmapCAOdv9RfpB77aVAln9NWgK9maOkpO4omqQvc9Dnng26-IH_qziHcxAMofqG1uGfMt2_Z4LkQdO_zXcmRn_6NY0FS3U_uSAGmudueq_r5H37QDYXQJIcV_A==";
 		let expected = "(╯°□°）╯︵ ┻━┻";
 		let output = keystore.decrypt_archive_name(&EncryptedArchiveName::from_str(name).unwrap()).unwrap();
@@ -493,9 +488,9 @@ mod test {
 
 	#[test]
 	fn encrypt_archive() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let encrypted_name = EncryptedArchiveName("13230a254e27bac67067a5c3ead9539141ffe689cd606ce9f3baec4b3384743d59934754363eb00ffdb3d128b6b691004e6df66f17ad90dba6ff939417a920b08827b93a8ab7".from_hex().unwrap());
-		let archive = "1c50fc6cff9174cdef6ae1949783cec449514818eb27ce9c1d0a475c23fb2a2de6741a9fb0462516d1ee69e1b1f70d6e4aecf03d0ae7260d3728e5cbfde6e73cbd9178a4d1164d2469dcf72aa84b4aac9c442c2018a4b6ef211cf49215f7a85fd27f13ae620347f2bd608b7550275cb9c51bbe52db156d8d75b27f9c16629f7fe6171aac7389c4f0dedc69c32b761fcb5974bdfd7661a98dae81c2becfde29fbb23d7a72ba5338ad6fd5fb56e1e3ee8dc0ed70bc054df683773c0001b2e51922ded5cf3908fb3769".from_hex().unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let encrypted_name = EncryptedArchiveName(HEXLOWER_PERMISSIVE.decode(b"13230a254e27bac67067a5c3ead9539141ffe689cd606ce9f3baec4b3384743d59934754363eb00ffdb3d128b6b691004e6df66f17ad90dba6ff939417a920b08827b93a8ab7").unwrap());
+		let archive = HEXLOWER_PERMISSIVE.decode(b"1c50fc6cff9174cdef6ae1949783cec449514818eb27ce9c1d0a475c23fb2a2de6741a9fb0462516d1ee69e1b1f70d6e4aecf03d0ae7260d3728e5cbfde6e73cbd9178a4d1164d2469dcf72aa84b4aac9c442c2018a4b6ef211cf49215f7a85fd27f13ae620347f2bd608b7550275cb9c51bbe52db156d8d75b27f9c16629f7fe6171aac7389c4f0dedc69c32b761fcb5974bdfd7661a98dae81c2becfde29fbb23d7a72ba5338ad6fd5fb56e1e3ee8dc0ed70bc054df683773c0001b2e51922ded5cf3908fb3769").unwrap();
 
 		let encrypted = keystore.encrypt_archive(&encrypted_name, &archive);
 		let decrypted = keystore.decrypt_archive(&encrypted_name, &encrypted).unwrap();
@@ -505,10 +500,10 @@ mod test {
 
 	#[test]
 	fn decrypt_archive() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let encrypted_name = EncryptedArchiveName("13230a254e27bac67067a5c3ead9539141ffe689cd606ce9f3baec4b3384743d59934754363eb00ffdb3d128b6b691004e6df66f17ad90dba6ff939417a920b08827b93a8ab7".from_hex().unwrap());
-		let encrypted = EncryptedArchive("29c12a136d3b0a86a580476bf683e2dccc11983aa1804972e122e3aada7553329057064501290bc01157c515b0b6ab33cf16cd5526b01c4ce7a286e9b9aad32ab731719013709008d6e657975cab0db16050aeaf651f2400541a3f6ffdf868e2112191a421e86799cda25e47edf90eb43d257dc1d0f0a3548446e8b4b3d753566cf997591118dfb5839fc26718a2bc8677b59a00060eb5de66392d0c352ec233d53548f6be012a202ba1074fc95b2f1e4430eb18dc9cc52f817b652f88ec65465121501e790daa174cb1b982aaa4c0933ae7daccafa7b9571109d2869256eee2b8404d43bc774a5b42b8e9939445d30560a4c0840786ebb5565c7a70663adc0bbbca3e6e1618ae14".from_hex().unwrap());
-		let expected = "1c50fc6cff9174cdef6ae1949783cec449514818eb27ce9c1d0a475c23fb2a2de6741a9fb0462516d1ee69e1b1f70d6e4aecf03d0ae7260d3728e5cbfde6e73cbd9178a4d1164d2469dcf72aa84b4aac9c442c2018a4b6ef211cf49215f7a85fd27f13ae620347f2bd608b7550275cb9c51bbe52db156d8d75b27f9c16629f7fe6171aac7389c4f0dedc69c32b761fcb5974bdfd7661a98dae81c2becfde29fbb23d7a72ba5338ad6fd5fb56e1e3ee8dc0ed70bc054df683773c0001b2e51922ded5cf3908fb3769".from_hex().unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let encrypted_name = EncryptedArchiveName(HEXLOWER_PERMISSIVE.decode(b"13230a254e27bac67067a5c3ead9539141ffe689cd606ce9f3baec4b3384743d59934754363eb00ffdb3d128b6b691004e6df66f17ad90dba6ff939417a920b08827b93a8ab7").unwrap());
+		let encrypted = EncryptedArchive(HEXLOWER_PERMISSIVE.decode(b"29c12a136d3b0a86a580476bf683e2dccc11983aa1804972e122e3aada7553329057064501290bc01157c515b0b6ab33cf16cd5526b01c4ce7a286e9b9aad32ab731719013709008d6e657975cab0db16050aeaf651f2400541a3f6ffdf868e2112191a421e86799cda25e47edf90eb43d257dc1d0f0a3548446e8b4b3d753566cf997591118dfb5839fc26718a2bc8677b59a00060eb5de66392d0c352ec233d53548f6be012a202ba1074fc95b2f1e4430eb18dc9cc52f817b652f88ec65465121501e790daa174cb1b982aaa4c0933ae7daccafa7b9571109d2869256eee2b8404d43bc774a5b42b8e9939445d30560a4c0840786ebb5565c7a70663adc0bbbca3e6e1618ae14").unwrap());
+		let expected = HEXLOWER_PERMISSIVE.decode(b"1c50fc6cff9174cdef6ae1949783cec449514818eb27ce9c1d0a475c23fb2a2de6741a9fb0462516d1ee69e1b1f70d6e4aecf03d0ae7260d3728e5cbfde6e73cbd9178a4d1164d2469dcf72aa84b4aac9c442c2018a4b6ef211cf49215f7a85fd27f13ae620347f2bd608b7550275cb9c51bbe52db156d8d75b27f9c16629f7fe6171aac7389c4f0dedc69c32b761fcb5974bdfd7661a98dae81c2becfde29fbb23d7a72ba5338ad6fd5fb56e1e3ee8dc0ed70bc054df683773c0001b2e51922ded5cf3908fb3769").unwrap();
 		let output = keystore.decrypt_archive(&encrypted_name, &encrypted).unwrap();
 
 		assert_eq!(output, expected);
@@ -516,8 +511,8 @@ mod test {
 
 	#[test]
 	fn block_id_from_block_secret() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let secret = Secret::from_slice(&"2777f099df579d92a133c63b070e90336a603ed53dce96d6856365f8618e9597".from_hex().unwrap()).unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let secret = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"2777f099df579d92a133c63b070e90336a603ed53dce96d6856365f8618e9597").unwrap()).unwrap();
 		let expected = "7b768a13e4fde76930e38c6eb7f83d320bddc5eecf8b5fe970543b7feea195dc";
 		let output = keystore.block_id_from_block_secret(&secret);
 
@@ -526,9 +521,9 @@ mod test {
 
 	#[test]
 	fn block_secret_from_block() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let block = "a928fbcbcbe0fed28f942f97d0890efafb29134d8a32798f0919e9930c4481b4228114e37316caab4844b54f2ae7b053f85fa36732bc2f8d64c240227a80d0a0d6f1aefc7c94cfc77657a2af1fb67f65e3c1e50dfb255552f11187465e0cc2acb81f250a6577d50d828790b3f855395f28c0d9c23358d40a1fb84c8383226f740de67ebf24b975c6972760895b46cc866aec410e7999a04232009c442a4d609c9df38f95de773c5b981344d3007e27b2b1eca1a42580a50a08f6d550892e4b60a18223d0fc049fcd".from_hex().unwrap();
-		let expected = Secret::from_slice(&"242d98aa50d8048bb1e4eed232cc7c0e23d7fdd8db2e01e7b25794acf0d850e7".from_hex().unwrap()).unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let block = HEXLOWER_PERMISSIVE.decode(b"a928fbcbcbe0fed28f942f97d0890efafb29134d8a32798f0919e9930c4481b4228114e37316caab4844b54f2ae7b053f85fa36732bc2f8d64c240227a80d0a0d6f1aefc7c94cfc77657a2af1fb67f65e3c1e50dfb255552f11187465e0cc2acb81f250a6577d50d828790b3f855395f28c0d9c23358d40a1fb84c8383226f740de67ebf24b975c6972760895b46cc866aec410e7999a04232009c442a4d609c9df38f95de773c5b981344d3007e27b2b1eca1a42580a50a08f6d550892e4b60a18223d0fc049fcd").unwrap();
+		let expected = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"242d98aa50d8048bb1e4eed232cc7c0e23d7fdd8db2e01e7b25794acf0d850e7").unwrap()).unwrap();
 		let output = keystore.block_secret_from_block(&block);
 
 		assert_eq!(output, expected);
@@ -536,11 +531,11 @@ mod test {
 
 	#[test]
 	fn encrypt_block() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let block = "cc544b2050e96c38880414a54fcd22a7732438acc08b9541ef00621fae3fc4311ccacef1da7036eb69116a297eca3f256a62e9f9c41d82794d975a7d7c9473df1887cd409c59fc3a564d8861a1fbe46e3b4393269ff0c60406688a3ce27314c4dcc73e4e69521fe357235240f70fa80b16b8fcc8376340a64ddeb4c486b0a4363d0d90b35db9811ca243a59f3582d8fcbf2fa95affdc8f8848ac0cbc43f4cb0d6a6240c6835e44014a4b178969ad76c8c7fb953450d4896eb541fa5bbd20cb3cfcc681db7b46dd1d".from_hex().unwrap();
-		let expected_secret = Secret::from_slice(&"ed10dd0d10371ceaaa1fb0c7aafe4c263ae63d3d1218649dffa579b7e13a6cc3".from_hex().unwrap()).unwrap();
-		let expected_id = BlockId::from_slice(&"8aa4569826e5c06fec4fd9bf30f9dba6a71678ed6c57761cc1cc0173ce993eab".from_hex().unwrap()).unwrap();
-		let expected_block = EncryptedBlock("5f61b5865df068f40a6092429b90c3849e0bc86f0048a515417397782e6b14a1d8e06a5408c0f7884b4c33850047c0ce4a1e648e51b6357fc6fb3fad19877ac169e1da21dd9af4b7f74f4db86f993b4c7ac8454cee6274a54c38751bfd908e72b5663c1aaea63956f66017711850e7467cb485adce83943c4d0525133567c7082d25eb739fc317037b91a691177dc5536e8b5d73d1b0345f5d587abf87bc228ffb0480c70ab9abd3f89006bc788968e542f24f5f6b48ac8b80ff7e9045f061389b2b56a6a165fe245e1765decc85c1f24c2dcf493685dc071f0cdabac909680fcfd9d67001bf2b77".from_hex().unwrap().to_vec());
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let block = HEXLOWER_PERMISSIVE.decode(b"cc544b2050e96c38880414a54fcd22a7732438acc08b9541ef00621fae3fc4311ccacef1da7036eb69116a297eca3f256a62e9f9c41d82794d975a7d7c9473df1887cd409c59fc3a564d8861a1fbe46e3b4393269ff0c60406688a3ce27314c4dcc73e4e69521fe357235240f70fa80b16b8fcc8376340a64ddeb4c486b0a4363d0d90b35db9811ca243a59f3582d8fcbf2fa95affdc8f8848ac0cbc43f4cb0d6a6240c6835e44014a4b178969ad76c8c7fb953450d4896eb541fa5bbd20cb3cfcc681db7b46dd1d").unwrap();
+		let expected_secret = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"ed10dd0d10371ceaaa1fb0c7aafe4c263ae63d3d1218649dffa579b7e13a6cc3").unwrap()).unwrap();
+		let expected_id = BlockId::from_slice(&HEXLOWER_PERMISSIVE.decode(b"8aa4569826e5c06fec4fd9bf30f9dba6a71678ed6c57761cc1cc0173ce993eab").unwrap()).unwrap();
+		let expected_block = EncryptedBlock(HEXLOWER_PERMISSIVE.decode(b"5f61b5865df068f40a6092429b90c3849e0bc86f0048a515417397782e6b14a1d8e06a5408c0f7884b4c33850047c0ce4a1e648e51b6357fc6fb3fad19877ac169e1da21dd9af4b7f74f4db86f993b4c7ac8454cee6274a54c38751bfd908e72b5663c1aaea63956f66017711850e7467cb485adce83943c4d0525133567c7082d25eb739fc317037b91a691177dc5536e8b5d73d1b0345f5d587abf87bc228ffb0480c70ab9abd3f89006bc788968e542f24f5f6b48ac8b80ff7e9045f061389b2b56a6a165fe245e1765decc85c1f24c2dcf493685dc071f0cdabac909680fcfd9d67001bf2b77").unwrap().to_vec());
 
 		let secret = keystore.block_secret_from_block(&block);
 		let id = keystore.block_id_from_block_secret(&secret);
@@ -553,19 +548,19 @@ mod test {
 
 	#[test]
 	fn test_verify_encrypted_block() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let id = BlockId::from_slice(&"a174d2732f230ad12f43d82af279a49636236d26321be908116e386e7ea1f737".from_hex().unwrap()).unwrap();
-		let encrypted_block = EncryptedBlock("f96e286e89cfda5548d4a82d63b91db6c1d5731176b15a6205d6dc274b322e261fe4eb8dc91418438d730839a4d097e768d5bd9b3f300180158fbd77428782ac87a3e5338561974ba0434c38c660dc3d0d0e7bf7358c3372d313f3a1be5bdf46f08f60840bc264caed3a17064a3c21a8b1150f87361f4e389f4e187c86cd069f032a2f15".from_hex().unwrap().to_vec());
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let id = BlockId::from_slice(&HEXLOWER_PERMISSIVE.decode(b"a174d2732f230ad12f43d82af279a49636236d26321be908116e386e7ea1f737").unwrap()).unwrap();
+		let encrypted_block = EncryptedBlock(HEXLOWER_PERMISSIVE.decode(b"f96e286e89cfda5548d4a82d63b91db6c1d5731176b15a6205d6dc274b322e261fe4eb8dc91418438d730839a4d097e768d5bd9b3f300180158fbd77428782ac87a3e5338561974ba0434c38c660dc3d0d0e7bf7358c3372d313f3a1be5bdf46f08f60840bc264caed3a17064a3c21a8b1150f87361f4e389f4e187c86cd069f032a2f15").unwrap().to_vec());
 
 		assert!(keystore.verify_encrypted_block(&id, &encrypted_block));
 	}
 
 	#[test]
 	fn test_decrypt_block() {
-		let keystore: KeyStore = json::decode(TEST_KEYSTORE_JSON).unwrap();
-		let secret = Secret::from_slice(&"ed10dd0d10371ceaaa1fb0c7aafe4c263ae63d3d1218649dffa579b7e13a6cc3".from_hex().unwrap()).unwrap();
-		let encrypted_block = EncryptedBlock("5f61b5865df068f40a6092429b90c3849e0bc86f0048a515417397782e6b14a1d8e06a5408c0f7884b4c33850047c0ce4a1e648e51b6357fc6fb3fad19877ac169e1da21dd9af4b7f74f4db86f993b4c7ac8454cee6274a54c38751bfd908e72b5663c1aaea63956f66017711850e7467cb485adce83943c4d0525133567c7082d25eb739fc317037b91a691177dc5536e8b5d73d1b0345f5d587abf87bc228ffb0480c70ab9abd3f89006bc788968e542f24f5f6b48ac8b80ff7e9045f061389b2b56a6a165fe245e1765decc85c1f24c2dcf493685dc071f0cdabac909680fcfd9d67001bf2b77".from_hex().unwrap().to_vec());
-		let expected = "cc544b2050e96c38880414a54fcd22a7732438acc08b9541ef00621fae3fc4311ccacef1da7036eb69116a297eca3f256a62e9f9c41d82794d975a7d7c9473df1887cd409c59fc3a564d8861a1fbe46e3b4393269ff0c60406688a3ce27314c4dcc73e4e69521fe357235240f70fa80b16b8fcc8376340a64ddeb4c486b0a4363d0d90b35db9811ca243a59f3582d8fcbf2fa95affdc8f8848ac0cbc43f4cb0d6a6240c6835e44014a4b178969ad76c8c7fb953450d4896eb541fa5bbd20cb3cfcc681db7b46dd1d".from_hex().unwrap();
+		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
+		let secret = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"ed10dd0d10371ceaaa1fb0c7aafe4c263ae63d3d1218649dffa579b7e13a6cc3").unwrap()).unwrap();
+		let encrypted_block = EncryptedBlock(HEXLOWER_PERMISSIVE.decode(b"5f61b5865df068f40a6092429b90c3849e0bc86f0048a515417397782e6b14a1d8e06a5408c0f7884b4c33850047c0ce4a1e648e51b6357fc6fb3fad19877ac169e1da21dd9af4b7f74f4db86f993b4c7ac8454cee6274a54c38751bfd908e72b5663c1aaea63956f66017711850e7467cb485adce83943c4d0525133567c7082d25eb739fc317037b91a691177dc5536e8b5d73d1b0345f5d587abf87bc228ffb0480c70ab9abd3f89006bc788968e542f24f5f6b48ac8b80ff7e9045f061389b2b56a6a165fe245e1765decc85c1f24c2dcf493685dc071f0cdabac909680fcfd9d67001bf2b77").unwrap().to_vec());
+		let expected = HEXLOWER_PERMISSIVE.decode(b"cc544b2050e96c38880414a54fcd22a7732438acc08b9541ef00621fae3fc4311ccacef1da7036eb69116a297eca3f256a62e9f9c41d82794d975a7d7c9473df1887cd409c59fc3a564d8861a1fbe46e3b4393269ff0c60406688a3ce27314c4dcc73e4e69521fe357235240f70fa80b16b8fcc8376340a64ddeb4c486b0a4363d0d90b35db9811ca243a59f3582d8fcbf2fa95affdc8f8848ac0cbc43f4cb0d6a6240c6835e44014a4b178969ad76c8c7fb953450d4896eb541fa5bbd20cb3cfcc681db7b46dd1d").unwrap();
 
 		let id = keystore.block_id_from_block_secret(&secret);
 		let output = keystore.decrypt_block(&secret, &id, &encrypted_block).unwrap();

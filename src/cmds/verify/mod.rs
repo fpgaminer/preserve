@@ -1,6 +1,5 @@
 use keystore::{KeyStore, Secret};
 use std::collections::HashSet;
-use rustc_serialize::hex::FromHex;
 use backend::{self, Backend};
 use archive::{Archive, File};
 use rand::{thread_rng, Rng};
@@ -58,7 +57,7 @@ pub fn execute(args: &ArgMatches) {
 	let mut block_list = HashSet::new();
 
 	build_block_list(&archive.files, &mut block_list);
-	let mut block_list: Vec<&String> = block_list.iter().collect();
+	let mut block_list: Vec<Secret> = block_list.into_iter().collect();
 	// We shuffle so that if verification is terminated it can be run again (multiple times) and
 	// probablistically cover all blocks.
 	thread_rng().shuffle(&mut block_list);
@@ -67,35 +66,19 @@ pub fn execute(args: &ArgMatches) {
 }
 
 
-fn build_block_list(files: &[File], block_list: &mut HashSet<String>) {
+fn build_block_list(files: &[File], block_list: &mut HashSet<Secret>) {
 	for file in files {
-		for secret_str in &file.blocks {
-			block_list.insert(secret_str.clone());
+		for secret in &file.blocks {
+			block_list.insert(secret.clone());
 		}
 	}
 }
 
 
-fn verify_blocks(block_list: &[&String], keystore: &KeyStore, backend: &mut Backend) {
+fn verify_blocks(block_list: &[Secret], keystore: &KeyStore, backend: &mut Backend) {
 	let mut corrupted_blocks = Vec::new();
 
-	for (idx, secret_str) in block_list.iter().enumerate() {
-		let secret = {
-			let secret_str_hex = match secret_str.from_hex() {
-				Ok(s) => s,
-				Err(_) => {
-					error!("CRITICAL ERROR: A Block secret contained invalid hex characters.  This is not normal and should never happen.  Probably the archive's version got mixed up somehow.  Secret: '{}'", secret_str);
-					continue;
-				},
-			};
-			match Secret::from_slice(&secret_str_hex) {
-				Some(s) => s,
-				None => {
-					error!("CRITICAL ERROR: A Block secret was not the right number of bytes.  This is not normal and should never happen.  Probably the archive's version got mixed up somehow.  Secret: '{}'", secret_str);
-					continue;
-				}
-			}
-		};
+	for (idx, secret) in block_list.iter().enumerate() {
 		let block_id = keystore.block_id_from_block_secret(&secret);
 
 		// TODO: Differentiate between a missing block and an error.  Missing blocks would be critical errors.

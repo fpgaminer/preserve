@@ -1,10 +1,9 @@
-use keystore::{KeyStore, EncryptedArchiveName, EncryptedArchive};
+use keystore::{KeyStore, EncryptedArchiveName, EncryptedArchive, Secret};
 use lzma;
-use rustc_serialize::json;
 use error::*;
 
 
-#[derive(RustcDecodable, RustcEncodable, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct File {
 	/// Path, relative to the archive
 	pub path: String,
@@ -26,7 +25,7 @@ pub struct File {
 	/// File size
 	pub size: u64,
 	/// Data blocks (list of block secrets)
-	pub blocks: Vec<String>,
+	pub blocks: Vec<Secret>,
 }
 
 
@@ -35,7 +34,7 @@ pub struct File {
 /// with it as a tree would require lots of extra, nasty code.
 /// The list is ordered such that folders are listed before the children inside of them, making restore
 /// easy.
-#[derive(RustcDecodable, RustcEncodable)]
+#[derive(Serialize, Deserialize)]
 pub struct Archive {
 	pub version: u32,
 	pub name: String,
@@ -48,8 +47,8 @@ impl Archive {
 	pub fn encrypt(self, keystore: &KeyStore) -> Result<(EncryptedArchiveName, EncryptedArchive)> {
 		let encrypted_name = try!(keystore.encrypt_archive_name(&self.name));
 
-		let encoded = json::as_json(&self);
-		let compressed = lzma::compress(encoded.to_string().as_bytes(), 9 | lzma::EXTREME_PRESET).expect("internal error");  // Compression shouldn't fail
+		let encoded = serde_json::to_vec(&self).expect("internal error");   // Serde shouldn't fail here
+		let compressed = lzma::compress(&encoded, 9 | lzma::EXTREME_PRESET).expect("internal error");  // Compression shouldn't fail
 		let encrypted_archive = keystore.encrypt_archive(&encrypted_name, &compressed);
 
 		Ok((encrypted_name, encrypted_archive))
@@ -59,7 +58,6 @@ impl Archive {
 		let compressed = try!(keystore.decrypt_archive(encrypted_name, encrypted_archive));
 
 		let decompressed = try!(lzma::decompress(&compressed).map_err(|_| Error::CorruptArchiveFailedDecompression));
-		let data = try!(String::from_utf8(decompressed).map_err(|_| Error::CorruptArchiveNotUtf8));
-		json::decode(&data).map_err(|_| Error::CorruptArchiveBadJson)
+		serde_json::from_slice(&decompressed).map_err(|_| Error::CorruptArchiveBadJson)
 	}
 }

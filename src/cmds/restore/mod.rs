@@ -5,7 +5,6 @@ use block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
 use std::collections::HashMap;
-use rustc_serialize::hex::FromHex;
 use backend::{self, Backend};
 use archive::{Archive, File};
 use clap::ArgMatches;
@@ -146,7 +145,7 @@ struct Config {
 }
 
 
-fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) -> Result<()> {
+fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<Secret, DownloadCache>) -> Result<()> {
 	for file in files {
 		try!(build_block_refcounts_helper(file, keystore, download_cache));
 	}
@@ -155,26 +154,24 @@ fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &m
 }
 
 
-fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache: &mut HashMap<String, DownloadCache>) -> Result<()> {
-	for secret_str in &file.blocks {
-		let secret_hex = try!(secret_str.from_hex().map_err(|_| Error::CorruptArchiveBadBlockSecret));
-		let secret = try!(Secret::from_slice(&secret_hex).ok_or(Error::CorruptArchiveBadBlockSecret));
+fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache: &mut HashMap<Secret, DownloadCache>) -> Result<()> {
+	for secret in &file.blocks {
 		let block_id = keystore.block_id_from_block_secret(&secret);
 
-		download_cache.entry(secret_str.clone()).or_insert(DownloadCache{
+		download_cache.entry(secret.clone()).or_insert(DownloadCache{
 			refcount: 0,
 			downloaded: false,
 			id: block_id,
-			secret: secret,
+			secret: secret.clone(),
 		});
-		download_cache.get_mut(secret_str).expect("internal error").refcount += 1;
+		download_cache.get_mut(secret).expect("internal error").refcount += 1;
 	}
 
 	Ok(())
 }
 
 
-fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Result<()> {
+fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<()> {
 	let mut hardlink_map: HashMap<u64, PathBuf> = HashMap::new();
 	// List of all directories and the mtimes they need set.
 	// We set these after extracting all files, since extracting the files changes the mtime of
@@ -242,7 +239,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 }
 
 
-fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Result<()> {
+fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<()> {
 	// Don't overwrite existing files
 	let file = try!(fs::OpenOptions::new().write(true).create_new(true).open(path.as_ref()));
 	let mut writer = BufWriter::new(&file);
@@ -263,8 +260,8 @@ fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cac
 }
 
 
-fn cache_fetch(secret_str: &str, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<String, DownloadCache>, backend: &mut Backend) -> Result<Vec<u8>> {
-	let cache = download_cache.get_mut(secret_str).expect("internal error");
+fn cache_fetch(secret: &Secret, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<Vec<u8>> {
+	let cache = download_cache.get_mut(secret).expect("internal error");
 	let path = cache_dir.join(cache.id.to_string());
 
 	if cache.downloaded {

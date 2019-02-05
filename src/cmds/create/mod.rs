@@ -5,7 +5,6 @@ use std::io::{Read, BufReader};
 use block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
-use rustc_serialize::hex::{ToHex, FromHex};
 use std::string::ToString;
 use backend::{self, Backend};
 use archive::{self, Archive};
@@ -545,7 +544,7 @@ impl<'a> ArchiveBuilder<'a> {
 }
 
 
-fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Result<Option<Vec<String>>> {
+fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Result<Option<Vec<Secret>>> {
 	let path = base_path.as_ref().join(&file.file.path);
 	let canonical_path = match file.canonical_path.clone() {
 		Some(canonical_path) => canonical_path,
@@ -570,39 +569,27 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 	match result {
 		Ok(blocks_str) => {
 			// The file is cached, but are all the blocks available in the current block store?
-			let mut need_reread = false;
 			let blocks_str: String = blocks_str;
-			let mut blocks = Vec::new();
 
-			if !blocks_str.is_empty() {
-				for block in blocks_str.split('\n') {
-					let block_hex = match block.from_hex() {
-						Ok(x) => x,
-						Err(_) => {
-							warn!("A bad block secret was found in the cache database.  The cache database might be corrupted.");
-							need_reread = true;
+			match serde_json::from_str::<Vec<Secret>>(&blocks_str) {
+				Ok(blocks) => {
+					let mut all_blocks_exist = true;
+
+					for block in &blocks {
+						if !block_store.block_exists(block, backend)? {
+							all_blocks_exist = false;
 							break;
 						}
-					};
-					let secret = match Secret::from_slice(&block_hex) {
-						Some(x) => x,
-						None => {
-							warn!("A bad block secret was found in the cache database.  The cache database might be corrupted.");
-							need_reread = true;
-							break;
-						}
-					};
-					if !try!(block_store.block_exists(&secret, backend)) {
-						need_reread = true;
-						break;
 					}
-					blocks.push(block.to_owned());
-				}
-			}
 
-			if !need_reread {
-				debug!("Found in mtime cache.");
-				return Ok(Some(blocks));
+					if all_blocks_exist {
+						debug!("Found in mtime cache.");
+						return Ok(Some(blocks));
+					}
+				},
+				Err(_) => {
+					warn!("Bad block secret encoding in the cache database.  The cache database might be corrupted.");
+				},
 			}
 		},
 		Err(rusqlite::Error::QueryReturnedNoRows) => (),
@@ -651,7 +638,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 			},
 		};
 
-		let blocks_str = blocks.join("\n");
+		let blocks_str = serde_json::to_string(&blocks).expect("internal error");
 		try!(cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]));
 
 		return Ok(Some(blocks));
@@ -661,7 +648,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 
 // Used by read_file.  read_file checks the cache, etc.  This will actually read the file into blocks.
 // If any file modifications are detected while reading, this function will return (None, true) to indicate the caller that it should retry (if it wishes).
-fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<String>>, bool)> {
+fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<Secret>>, bool)> {
 	let reader_file = match fs::File::open(&path) {
 		Ok(f) => f,
 		Err(err) => {
@@ -706,9 +693,9 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 
 		total_read += buffer.len();
 
-		let Secret(secret) = try!(block_store.new_block_from_plaintext(&buffer, backend));
+		let secret = block_store.new_block_from_plaintext(&buffer, backend)?;
 		// TODO: Should we implement ToString for Secret and use that instead?
-		blocks.push(secret.to_hex());
+		blocks.push(secret);
 
 		if (total_read % (64*1024*1024)) == 0 {
 			info!("Progress: {}MB of {}MB", (progress + total_read as u64) / (1024*1024), total_size / (1024*1024));
