@@ -1,5 +1,5 @@
-use backend::Backend;
-use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
+use crate::backend::Backend;
+use crate::keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use std::path::{Path, PathBuf};
 use std::io::{Read, Write};
 use std::fs::{self, OpenOptions};
@@ -7,7 +7,7 @@ use rand::rngs::OsRng;
 use rand::Rng;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::str::FromStr;
-use error::*;
+use crate::error::*;
 
 
 pub struct FileBackend {

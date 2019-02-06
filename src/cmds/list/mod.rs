@@ -1,6 +1,7 @@
-use keystore::KeyStore;
-use backend;
+use crate::keystore::KeyStore;
+use crate::backend;
 use clap::ArgMatches;
+use log::{error, warn};
 
 
 pub fn execute(args: &ArgMatches) {

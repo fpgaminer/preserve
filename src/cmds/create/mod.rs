@@ -1,18 +1,19 @@
 use rusqlite::types::ToSql;
-use keystore::{KeyStore, Secret};
+use crate::keystore::{KeyStore, Secret};
 use std::fs;
 use std::io::{Read, BufReader};
-use block::BlockStore;
+use crate::block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
 use std::string::ToString;
-use backend::{self, Backend};
-use archive::{self, Archive};
+use crate::backend::{self, Backend};
+use crate::archive::{self, Archive};
 use rusqlite;
 use std::collections::{HashSet, HashMap};
 use std::env;
 use clap::ArgMatches;
-use error::*;
+use crate::error::*;
+use log::{warn, error, info, debug};
 
 
 pub fn execute(args: &ArgMatches) {

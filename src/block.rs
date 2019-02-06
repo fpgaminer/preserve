@@ -1,6 +1,6 @@
-use keystore::{KeyStore, Secret};
-use backend::Backend;
-use error::*;
+use crate::keystore::{KeyStore, Secret};
+use crate::backend::Backend;
+use crate::error::*;
 
 
 pub struct BlockStore<'a> {

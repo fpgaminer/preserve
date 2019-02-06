@@ -1,10 +1,10 @@
-use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
-use error::*;
+use crate::keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
+use crate::error::*;
 use url::Url;
 
 pub mod file;
 
-pub use backend::file::FileBackend;
+pub use crate::backend::file::FileBackend;
 
 
 pub trait Backend {

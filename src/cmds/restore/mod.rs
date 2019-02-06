@@ -1,14 +1,15 @@
-use keystore::{KeyStore, Secret, BlockId};
+use crate::keystore::{KeyStore, Secret, BlockId};
 use std::fs;
 use std::io::{self, BufWriter, Write, Read};
-use block::BlockStore;
+use crate::block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
 use std::collections::HashMap;
-use backend::{self, Backend};
-use archive::{Archive, File};
+use crate::backend::{self, Backend};
+use crate::archive::{Archive, File};
 use clap::ArgMatches;
-use error::*;
+use crate::error::*;
+use log::{error, info};
 
 
 struct DownloadCache {

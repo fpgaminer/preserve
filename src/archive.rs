@@ -1,6 +1,7 @@
-use keystore::{KeyStore, EncryptedArchiveName, EncryptedArchive, Secret};
+use crate::keystore::{KeyStore, EncryptedArchiveName, EncryptedArchive, Secret};
 use lzma;
-use error::*;
+use crate::error::*;
+use serde_derive::{Serialize, Deserialize};
 
 
 #[derive(Serialize, Deserialize, Clone)]

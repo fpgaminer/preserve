@@ -7,11 +7,12 @@ use crypto::mac::{Mac, MacResult};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::curve25519;
 use std::str::FromStr;
-use error::*;
+use crate::error::*;
 use std::path::Path;
 use std::fs;
 use data_encoding::{BASE64URL, HEXLOWER_PERMISSIVE};
 use rand::rngs::OsRng;
+use serde_derive::{Serialize, Deserialize};
 
 
 new_type!{

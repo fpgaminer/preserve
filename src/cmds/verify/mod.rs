@@ -1,9 +1,10 @@
-use keystore::{KeyStore, Secret};
+use crate::keystore::{KeyStore, Secret};
 use std::collections::HashSet;
-use backend::{self, Backend};
-use archive::{Archive, File};
+use crate::backend::{self, Backend};
+use crate::archive::{Archive, File};
 use rand::prelude::*;
 use clap::ArgMatches;
+use log::{error, info};
 
 
 pub fn execute(args: &ArgMatches) {

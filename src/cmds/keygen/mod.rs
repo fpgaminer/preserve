@@ -1,7 +1,8 @@
-use keystore::KeyStore;
+use crate::keystore::KeyStore;
 use std::fs::OpenOptions;
 use std::io::{self, BufWriter, Write};
 use clap::ArgMatches;
+use log::error;
 
 
 pub fn execute(args: &ArgMatches) {

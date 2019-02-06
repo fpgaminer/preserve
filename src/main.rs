@@ -1,23 +1,5 @@
 #[macro_use]
-extern crate serde_derive;
-extern crate serde;
-extern crate serde_json;
-extern crate crypto;
-extern crate rand;
-extern crate lzma;
-extern crate libc;
-extern crate tempfile;
-extern crate rusqlite;
-#[macro_use]
-extern crate log;
-extern crate time;
-#[macro_use]
-extern crate clap;
-extern crate url;
-extern crate data_encoding;
-
-#[macro_use]
-pub mod newtype_macros;
+mod newtype_macros;
 mod keystore;
 mod archive;
 mod backend;
@@ -26,8 +8,8 @@ mod cmds;
 mod logger;
 mod error;
 
-use logger::Logger;
-use clap::{App, AppSettings, SubCommand, Arg};
+use crate::logger::Logger;
+use clap::{App, AppSettings, SubCommand, Arg, crate_version};
 
 
 fn main() {

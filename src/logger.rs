@@ -1,4 +1,3 @@
-use log;
 use time;
 use std::fs::File;
 use std::io::Write;
