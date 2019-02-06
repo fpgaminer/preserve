@@ -3,7 +3,8 @@ use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use std::path::{Path, PathBuf};
 use std::io::{BufReader, Read, Write};
 use std::fs::{self, OpenOptions};
-use rand::{Rng, OsRng};
+use rand::rngs::OsRng;
+use rand::Rng;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::str::FromStr;
 use error::*;
@@ -24,7 +25,7 @@ impl FileBackend {
 		// First, write to a temporary file.
 		let temppath = {
 			let mut rng = OsRng::new().expect("OsRng failed during initialization");
-			let tempname: String = rng.gen_ascii_chars().take(25).collect();
+			let tempname: String = rng.sample_iter(&rand::distributions::Alphanumeric).take(32).collect();
 			let temppath = self.backup_dir.join("temp");
 			fs::create_dir_all(&temppath).unwrap_or(());
 			temppath.join(tempname)

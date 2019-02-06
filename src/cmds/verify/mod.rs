@@ -2,7 +2,7 @@ use keystore::{KeyStore, Secret};
 use std::collections::HashSet;
 use backend::{self, Backend};
 use archive::{Archive, File};
-use rand::{thread_rng, Rng};
+use rand::prelude::*;
 use clap::ArgMatches;
 
 
@@ -60,7 +60,7 @@ pub fn execute(args: &ArgMatches) {
 	let mut block_list: Vec<Secret> = block_list.into_iter().collect();
 	// We shuffle so that if verification is terminated it can be run again (multiple times) and
 	// probablistically cover all blocks.
-	thread_rng().shuffle(&mut block_list);
+	block_list.shuffle(&mut rand::thread_rng());
 
 	verify_blocks(&block_list, &keystore, &mut *backend);
 }

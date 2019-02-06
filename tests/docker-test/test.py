@@ -11,14 +11,12 @@ def main():
 
 	# Create temporary folders to hold the backup data and then restored result
 	backup_dir = tempfile.mkdtemp(prefix="preserve-docker-test-backup-")
-	restore_dir = tempfile.mkdtemp(prefix="preserve-docker-test-restore-")
 
 	# NOTE: On macOS (as of 2019.01.18) mktemp et al return a path starting with '/var'.
 	# Docker for macOS, by default, won't mount '/var' paths.
 	# But '/var' is actually a symlink to '/private' which Docker for macOS will mount.
 	# So we use realpath to resolve the symlink.
 	backup_dir = os.path.realpath(backup_dir)
-	restore_dir = os.path.realpath(restore_dir)
 
 	# Copy preserve source code for Docker
 	shutil.rmtree('src/preserve-src', ignore_errors=True)
@@ -46,7 +44,6 @@ def main():
 	print("NOTE: ")
 	print("Left behind the following folders/files, in case they are needed for inspection:")
 	print(backup_dir)
-	print(restore_dir)
 	print("exported-backup-image.tar")
 	print("logs/*")
 

@@ -2,12 +2,12 @@ extern crate tempfile;
 extern crate rand;
 extern crate libc;
 
+use rand::prelude::*;
 use std::process::Command;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::io::{Write, BufWriter};
 use tempfile::TempDir;
-use rand::{Rng, ChaChaRng};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::cmp;
 use std::os::unix;
@@ -158,15 +158,17 @@ impl TestConfig {
 
 
 struct TestGenerator {
-	rng: Box<Rng>,
+	rng: Box<RngCore>,
 }
 
 
 impl TestGenerator {
 	fn new() -> TestGenerator {
 		TestGenerator {
-			// Deterministic seed
-			rng: Box::new(ChaChaRng::new_unseeded()),
+			// We don't need the rng used here to be cryptographically secure.  StdRng is just chosen because it's seedable and fairly performant.
+			// We want something seedable so that the generated test cases are somewhat deterministic.  Determinism is helpful for debugging.
+			// It'd be a pain to debug tests when the test cases keep changing.  We don't care about determinism between platforms and future versions.
+			rng: Box::new(StdRng::seed_from_u64(42)),
 		}
 	}
 
@@ -199,34 +201,36 @@ impl TestGenerator {
 			for _ in 0..num_nodes_to_generate {
 				let filename = self.generate_random_name();
 				let path = parent.join(filename);
-				let dice = self.rng.next_f32();
 
-				if dice < 0.5 {
-					// File: 50%
-					self.generate_random_file(&path);
 
-					if path.metadata().unwrap().len() == 0 {
-						number_of_empty_files += 1;
-					}
+				match self.rng.gen_range(0, 100) {
+					0 ... 49 => {
+						// File: 50%
+						self.generate_random_file(&path);
 
-					all_files.push(path);
-				}
-				else if dice < 0.8 {
-					// Folder: 30%
-					self.generate_random_folder(&path);
-					all_folders.push(path.clone());
-					tasks.push(path.clone());
-				}
-				else if dice < 0.9 {
-					// Symlink: 10%
-					self.generate_random_symlink(&path, &all_files, &all_folders);
-					number_of_symlinks += 1;
-				}
-				else {
-					// Hardlink: 10%
-					if self.generate_random_hardlink(&path, &all_files) {
-						number_of_hardlinks += 1;
-					}
+						if path.metadata().unwrap().len() == 0 {
+							number_of_empty_files += 1;
+						}
+
+						all_files.push(path);
+					},
+					50 ... 79 => {
+						// Folder: 30%
+						self.generate_random_folder(&path);
+						all_folders.push(path.clone());
+						tasks.push(path.clone());
+					},
+					80 ... 89 => {
+						// Symlink: 10%
+						self.generate_random_symlink(&path, &all_files, &all_folders);
+						number_of_symlinks += 1;
+					},
+					_ => {
+						// Hardlink: 10%
+						if self.generate_random_hardlink(&path, &all_files) {
+							number_of_hardlinks += 1;
+						}
+					},
 				}
 			}
 
@@ -254,24 +258,26 @@ impl TestGenerator {
 		let alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
 		let alphabet: Vec<char> = alphabet.chars().collect();
 		let mut name = String::new();
-		let mut name_tmp = String::new();
 		let len = self.rng.gen_range(1, 256);
 
 		loop {
 			// 12% chance of being random alphanumeric unicode char, otherwise use alphabet above
 			let c: char = if self.rng.next_u32() < 0x2000_0000 {
-				self.rng.gen_iter::<char>().filter(|c| c.is_alphanumeric()).take(1).next().unwrap()
+				self.rng.sample_iter(&rand::distributions::Standard).filter(|c: &char| c.is_alphanumeric()).next().unwrap()
 			} else {
-				*self.rng.choose(&alphabet).unwrap()
+				*alphabet.choose(&mut self.rng).unwrap()
 			};
 
-			name_tmp.push(c);
+			name.push(c);
 
-			if name_tmp.len() > len {
+			if name.len() == len {
 				return name;
 			}
 
-			name.push(c);
+			if name.len() > len {
+				// We want a specific number of bytes (not chars) and the last char went too far.  Try again.
+				name.pop();
+			}
 		}
 	}
 
@@ -279,18 +285,14 @@ impl TestGenerator {
 	// Length, contents, permissions, etc. will be random.
 	fn generate_random_file<P: AsRef<Path>>(&mut self, path: P) {
 		let mode = (self.rng.next_u32() & 511) | 0o600;
-		let dice = self.rng.next_f32();
-		let len = if dice <= 0.1 {
-			0 // Empty (10%)
-		} else if dice <= 0.6 {
-			self.rng.gen_range(1, 1024) // Small (50%)
-		} else if dice <= 0.9 {
-			self.rng.gen_range(1, 2*1024*1024) // Medium (30%)
-		} else {
-			self.rng.gen_range(1, 32*1024*1024) // Large (10%)
+		let len = match self.rng.gen_range(0, 100) {
+			0 ... 9 => 0, // Empty (10%)
+			10 ... 59 => self.rng.gen_range(1, 1024), // Small (50%)
+			60 ... 89 => self.rng.gen_range(1, 2*1024*1024), // Medium (30%)
+			_ => self.rng.gen_range(1, 32*1024*1024), // Large (10%)
 		};
 
-		// Generate ascii data sometimes
+		// Generate alphanumberic data sometimes
 		let is_ascii = self.rng.gen_range(0, 2) == 0;
 
 		{
@@ -303,7 +305,7 @@ impl TestGenerator {
 				let chunk_size = cmp::min(buffer.len(), len - written);
 
 				if is_ascii {
-					let string_data: String = self.rng.gen_ascii_chars().take(chunk_size).collect();
+					let string_data: String = self.rng.sample_iter(&rand::distributions::Alphanumeric).take(chunk_size).collect();
 					writer.write_all(string_data.as_bytes()).unwrap();
 					written += string_data.len();
 				}
@@ -331,10 +333,10 @@ impl TestGenerator {
 			if self.rng.gen() {
 				None // Bad symlink
 			} else {
-				self.rng.choose(potential_files)
+				potential_files.choose(&mut self.rng)
 			}
 		} else {
-			self.rng.choose(potential_folders)
+			potential_folders.choose(&mut self.rng)
 		};
 
 		let target = match target {
@@ -373,7 +375,7 @@ impl TestGenerator {
 	// Generate a hardlink at the given path, linking randomly to one of the potential_files.
 	// Returns false when potential_files is empty
 	fn generate_random_hardlink<P: AsRef<Path>>(&mut self, path: P, potential_files: &[PathBuf]) -> bool {
-		match self.rng.choose(potential_files) {
+		match potential_files.choose(&mut self.rng) {
 			Some(target) => {
 				fs::hard_link(target, path).unwrap();
 				true
@@ -385,7 +387,7 @@ impl TestGenerator {
 	fn generate_random_filetime(&mut self) -> (i64, i64) {
 		let base_time = 1456713592;
 
-		(self.rng.gen_range(base_time-256000, base_time+256000), self.rng.gen_range(0, 1000000000))
+		(self.rng.gen_range(base_time-25600000, base_time+25600000), self.rng.gen_range(0, 1000000000))
 	}
 
 	fn set_random_filetime<P: AsRef<Path>>(&mut self, path: P) {
@@ -483,7 +485,7 @@ fn parse_rsync_output(output: &str) -> bool {
 // for inspection, and then panic with the error message.
 fn handle_failed_restore<P: AsRef<Path>, Q: AsRef<Path>>(original_dir: P, restore_dir: Q, reason: &str, err: &str) {
 	let mut rng = rand::thread_rng();
-	let random_str: String = rng.gen_ascii_chars().take(10).collect();
+	let random_str: String = rng.sample_iter(&rand::distributions::Alphanumeric).take(10).collect();
 
 	fs::rename(original_dir, "/tmp/preserve-test-failed-original-".to_string() + &random_str).unwrap();
 	fs::rename(restore_dir, "/tmp/preserve-test-failed-restore-".to_string() + &random_str).unwrap();

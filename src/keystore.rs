@@ -1,4 +1,3 @@
-use rand::{OsRng, Rng};
 use std::io::{self, BufReader};
 use crypto;
 use crypto::chacha20::ChaCha20;
@@ -12,6 +11,7 @@ use error::*;
 use std::path::Path;
 use std::fs;
 use data_encoding::{BASE64URL, HEXLOWER_PERMISSIVE};
+use rand::rngs::OsRng;
 
 
 new_type!{
@@ -44,6 +44,15 @@ struct EncryptionKey {
 struct KdfKey {
 	key_key: HmacKey,
 	nonce_key: HmacKey,
+}
+
+impl KdfKey {
+	fn from_rng(rng: &mut OsRng) -> KdfKey {
+		KdfKey {
+			key_key: HmacKey::from_rng(rng),
+			nonce_key: HmacKey::from_rng(rng),
+		}
+	}
 }
 
 new_type!{
@@ -103,32 +112,23 @@ pub struct KeyStore {
 impl KeyStore {
 	pub fn new() -> KeyStore {
 		let mut rng = OsRng::new().expect("OsRng failed to initialize");
-		let archive_private_key: Curve25519PrivateKey = rng.gen();
+		let archive_private_key = Curve25519PrivateKey::from_rng(&mut rng);
 		let archive_public_key = crypto::curve25519::curve25519_base(&archive_private_key[..]);
 
 		KeyStore {
-			block_secret_key: rng.gen(),
-			block_id_key: rng.gen(),
-			block_kdf_key: KdfKey {
-				key_key: rng.gen(),
-				nonce_key: rng.gen(),
-			},
-			block_hmac_key: rng.gen(),
+			block_secret_key: HmacKey::from_rng(&mut rng),
+			block_id_key: HmacKey::from_rng(&mut rng),
+			block_kdf_key: KdfKey::from_rng(&mut rng),
+			block_hmac_key: HmacKey::from_rng(&mut rng),
 
 			archive_private_key: archive_private_key,
 			archive_public_key: Curve25519PublicKey::from_slice(&archive_public_key).expect("internal error"),
-			archive_kdf_key: KdfKey {
-				key_key: rng.gen(),
-				nonce_key: rng.gen(),
-			},
-			archive_hmac_key: rng.gen(),
+			archive_kdf_key: KdfKey::from_rng(&mut rng),
+			archive_hmac_key: HmacKey::from_rng(&mut rng),
 
-			archive_name_id_key: rng.gen(),
-			archive_name_kdf_key: KdfKey {
-				key_key: rng.gen(),
-				nonce_key: rng.gen(),
-			},
-			archive_name_hmac_key: rng.gen(),
+			archive_name_id_key: HmacKey::from_rng(&mut rng),
+			archive_name_kdf_key: KdfKey::from_rng(&mut rng),
+			archive_name_hmac_key: HmacKey::from_rng(&mut rng),
 		}
 	}
 
@@ -202,7 +202,7 @@ impl KeyStore {
 	pub fn encrypt_archive(&self, &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName, archive: &[u8]) -> EncryptedArchive {
 		let ephemeral_private_key: Curve25519PrivateKey = {
 			let mut rng = OsRng::new().expect("OsRng failed to initialize");
-			rng.gen()
+			Curve25519PrivateKey::from_rng(&mut rng)
 		};
 		let ephemeral_public_key = Curve25519PublicKey::from_slice(&curve25519::curve25519_base(&ephemeral_private_key[..])).expect("internal error");
 
