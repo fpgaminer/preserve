@@ -4,7 +4,7 @@ use crate::error::*;
 use serde_derive::{Serialize, Deserialize};
 
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Clone)]
 pub struct File {
 	/// Path, relative to the archive
 	pub path: String,

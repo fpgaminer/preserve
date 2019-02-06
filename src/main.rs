@@ -79,6 +79,16 @@ fn main() {
 								 --backend=<BACKEND>  'Sets the backend to use'
 								 <NAME>               'The name of the backup to verify'")
 						)
+						.subcommand(SubCommand::with_name("diff")
+							.about("diff two existing backups")
+							.setting(AppSettings::UnifiedHelpMessage)
+							.setting(AppSettings::ColoredHelp)
+							.args_from_usage(
+								"--keyfile=<KEYFILE>  'Sets the keyfile to use'
+								 --backend=<BACKEND>  'Sets the backend to use'
+								 <NAME1>              'The name of the first backup'
+								 <NAME2>              'The name of the second backup'")
+						)
 						.get_matches();
 
 	Logger::init(log::LevelFilter::Info, matches.value_of("logfile"));
@@ -89,6 +99,7 @@ fn main() {
 		("list", Some(sub_m)) => cmds::list::execute(sub_m),
 		("restore", Some(sub_m)) => cmds::restore::execute(sub_m),
 		("verify", Some(sub_m)) => cmds::verify::execute(sub_m),
+		("diff", Some(sub_m)) => cmds::diff::execute(sub_m),
 		_ => panic!("Unknown subcommand"),
 	}
 }

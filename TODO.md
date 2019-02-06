@@ -26,3 +26,5 @@
  * Maybe use the flexi_logger crate instead of our custom logger?
  * Remove Comparison functions from newtype and replace with a constant_time_compare function so it's explicit (also remove hashing, partialord, etc, etc)
  * Add a test that backs up to one backend, and then to another, and then restores from each.  This should make sure that the cache mechanism doesn't accidentally cause preserve to skip uploading blocks.  Also we should try copying over half of a backend and making sure it still works after another archive creation and restore; again verifying that the cache doesn't prevent preserve from correctly backing up.
+ * Use failure crate
+ * Add tests for diff command.

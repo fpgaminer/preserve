@@ -19,13 +19,11 @@ pub trait Backend {
 
 
 /// Given a backend path, return a Box'd Backend.
-pub fn backend_from_backend_path(path: &str) -> Result<Box<Backend>> {
+pub fn backend_from_backend_path(path: &str) -> Result<Box<dyn Backend>> {
 	let url = Url::parse(path).map_err(|_| Error::BadBackendPath("Given backend path could not be understood.".to_string()))?;
 
-	let backend: Box<Backend> = match url.scheme() {
-		"file" => Box::new(FileBackend::new(url.path())),
+	match url.scheme() {
+		"file" => Ok(Box::new(FileBackend::new(url.path()))),
 		e => return Err(Error::BadBackendPath(format!("Unknown backend: {}", e))),
-	};
-
-	Ok(backend)
+	}
 }
