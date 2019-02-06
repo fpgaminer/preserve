@@ -171,7 +171,7 @@ struct ArchiveBuilder<'a> {
 impl<'a> ArchiveBuilder<'a> {
 	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, block_store: &'a BlockStore) -> Result<ArchiveBuilder<'a>> {
 		let base_path = if base_path.as_ref().is_relative() {
-			try!(env::current_dir()).join(base_path)
+			env::current_dir()?.join(base_path)
 		} else {
 			PathBuf::from(base_path.as_ref())
 		};
@@ -210,18 +210,18 @@ impl<'a> ArchiveBuilder<'a> {
 	}
 
 	fn open_cache_db(&self) -> Result<rusqlite::Connection> {
-		let db = try!(rusqlite::Connection::open("cache.sqlite"));
+		let db = rusqlite::Connection::open("cache.sqlite")?;
 
-		try!(db.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
+		db.execute("CREATE TABLE IF NOT EXISTS mtime_cache (
 			path TEXT NOT NULL,
 			mtime INTEGER NOT NULL,
 			mtime_nsec INTEGER NOT NULL,
 			size INTEGER NOT NULL,
 			blocks TEXT NOT NULL
-		)", rusqlite::NO_PARAMS));
+		)", rusqlite::NO_PARAMS)?;
 
-		try!(db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", rusqlite::NO_PARAMS));
-		try!(db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", rusqlite::NO_PARAMS));
+		db.execute("CREATE INDEX IF NOT EXISTS idx_mtime_cache_path_mtime_size ON mtime_cache (path, mtime, mtime_nsec, size);", rusqlite::NO_PARAMS)?;
+		db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_mtime_cache_path ON mtime_cache (path);", rusqlite::NO_PARAMS)?;
 
 		Ok(db)
 	}
@@ -232,7 +232,7 @@ impl<'a> ArchiveBuilder<'a> {
 		self.total_size = 0;
 
 		let base_path = self.base_path.clone();
-		let base_path_metadata = try!(self.base_path.metadata());
+		let base_path_metadata = self.base_path.metadata()?;
 		let current_filesystem = if self.config.one_file_system { Some(base_path_metadata.dev()) } else { None };
 		let mut unscanned_paths: Vec<PathBuf> = Vec::new();
 
@@ -261,7 +261,7 @@ impl<'a> ArchiveBuilder<'a> {
 		Ok(Archive {
 			version: 0x00000001,
 			name: name.to_owned(),
-			original_path: try!(self.base_path.canonicalize()).to_string_lossy().to_string(),
+			original_path: self.base_path.canonicalize()?.to_string_lossy().to_string(),
 			files: files,
 		})
 	}
@@ -520,7 +520,7 @@ impl<'a> ArchiveBuilder<'a> {
 
 	fn read_files(&mut self) -> Result<()> {
 		let mut progress = 0;
-		let cache_db = try!(self.open_cache_db());
+		let cache_db = self.open_cache_db()?;
 
 		for file in &mut self.files {
 			if file.file.is_dir || file.file.symlink.is_some() {
@@ -528,7 +528,7 @@ impl<'a> ArchiveBuilder<'a> {
 			}
 
 			info!("Reading file: {}", file.file.path);
-			match try!(read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size)) {
+			match read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size)? {
 				Some(blocks) => file.file.blocks.extend(blocks),
 				None => file.missing = true,
 			};
@@ -616,7 +616,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		};
 
 		// Read file contents
-		let (blocks, should_retry) = try!(read_file_inner(&path, block_store, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size));
+		let (blocks, should_retry) = read_file_inner(&path, block_store, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size)?;
 
 		let blocks = match blocks {
 			Some(blocks) => blocks,
@@ -639,7 +639,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		};
 
 		let blocks_str = serde_json::to_string(&blocks).expect("internal error");
-		try!(cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str]));
+		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str])?;
 
 		return Ok(Some(blocks));
 	}

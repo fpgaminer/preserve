@@ -147,7 +147,7 @@ struct Config {
 
 fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<Secret, DownloadCache>) -> Result<()> {
 	for file in files {
-		try!(build_block_refcounts_helper(file, keystore, download_cache));
+		build_block_refcounts_helper(file, keystore, download_cache)?;
 	}
 
 	Ok(())
@@ -184,13 +184,13 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 		if let Some(ref symlink_path) = file.symlink {
 			use std::os::unix;
 			info!("Creating symlink: {} {}", symlink_path, filepath.display());
-			try!(unix::fs::symlink(symlink_path, &filepath));
+			unix::fs::symlink(symlink_path, &filepath)?;
 		} else if file.is_dir {
 			info!("Creating directory: {}", filepath.display());
 			// Create and then set permissions.  This is done in two steps because
 			// mkdir is affected by the current process's umask, whereas chmod (set_permissions) is not.
-			try!(fs::create_dir(&filepath));
-			try!(fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)));
+			fs::create_dir(&filepath)?;
+			fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode))?;
 			directory_times.push((filepath.clone(), file.mtime, file.mtime_nsec));
 		} else {
 			let hardlinked = if let Some(hardlink_id) = file.hardlink_id {
@@ -200,7 +200,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 					match hardlink_map.get(&hardlink_id) {
 						Some(existing_path) => {
 							info!("Hardlinking '{}' to '{}'", existing_path.display(), filepath.display());
-							try!(fs::hard_link(existing_path, &filepath));
+							fs::hard_link(existing_path, &filepath)?;
 							true
 						},
 						None => false,
@@ -213,8 +213,8 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			if !hardlinked {
 				info!("Writing file: {}", filepath.display());
 				// We set permissions after creating the file because `open` uses umask.
-				try!(extract_file(&filepath, file, block_store, cache_dir, download_cache, backend));
-				try!(fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode)));
+				extract_file(&filepath, file, block_store, cache_dir, download_cache, backend)?;
+				fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode))?;
 
 				if !config.dereference_hardlinks {
 					if let Some(hardlink_id) = file.hardlink_id {
@@ -224,7 +224,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			}
 		}
 
-		try!(set_file_time(&filepath, file.mtime, file.mtime_nsec));
+		set_file_time(&filepath, file.mtime, file.mtime_nsec)?;
 	}
 
 	// Set mtime for directories.
@@ -232,7 +232,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 	directory_times.reverse();
 
 	for (ref dirpath, ref mtime, ref mtime_nsec) in directory_times {
-		try!(set_file_time(dirpath, *mtime, *mtime_nsec));
+		set_file_time(dirpath, *mtime, *mtime_nsec)?;
 	}
 
 	Ok(())
@@ -241,14 +241,14 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 
 fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<()> {
 	// Don't overwrite existing files
-	let file = try!(fs::OpenOptions::new().write(true).create_new(true).open(path.as_ref()));
+	let file = fs::OpenOptions::new().write(true).create_new(true).open(path.as_ref())?;
 	let mut writer = BufWriter::new(&file);
 	let mut total_written = 0;
 
 	for secret in &f.blocks {
-		let plaintext = try!(cache_fetch(secret, block_store, cache_dir, download_cache, backend));
+		let plaintext = cache_fetch(secret, block_store, cache_dir, download_cache, backend)?;
 
-		try!(writer.write_all(&plaintext));
+		writer.write_all(&plaintext)?;
 		total_written += plaintext.len();
 	}
 
@@ -266,28 +266,28 @@ fn cache_fetch(secret: &Secret, block_store: &BlockStore, cache_dir: &Path, down
 
 	if cache.downloaded {
 		let plaintext = {
-			let mut file = try!(fs::File::open(path.clone()));
+			let mut file = fs::File::open(path.clone())?;
 			let mut plaintext = vec![0u8; 0];
-			try!(file.read_to_end(&mut plaintext));
+			file.read_to_end(&mut plaintext)?;
 			plaintext
 		};
 
 		cache.refcount -= 1;
 
 		if cache.refcount == 0 {
-			try!(fs::remove_file(path));
+			fs::remove_file(path)?;
 		}
 
 		Ok(plaintext)
 	} else {
-		let plaintext = try!(block_store.fetch_block(&cache.secret, backend));
+		let plaintext = block_store.fetch_block(&cache.secret, backend)?;
 
 		cache.refcount -=1;
 		cache.downloaded = true;
 
 		if cache.refcount > 0 {
-			let mut file = try!(fs::File::create(path));
-			try!(file.write_all(&plaintext));
+			let mut file = fs::File::create(path)?;
+			file.write_all(&plaintext)?;
 		}
 
 		Ok(plaintext)

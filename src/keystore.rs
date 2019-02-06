@@ -141,7 +141,7 @@ impl KeyStore {
 	}
 
 	pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<KeyStore> {
-		let file = try!(fs::File::open(path));
+		let file = fs::File::open(path)?;
 		let mut reader = BufReader::new(file);
 
 		KeyStore::load(&mut reader)

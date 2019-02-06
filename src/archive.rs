@@ -45,7 +45,7 @@ pub struct Archive {
 
 impl Archive {
 	pub fn encrypt(self, keystore: &KeyStore) -> Result<(EncryptedArchiveName, EncryptedArchive)> {
-		let encrypted_name = try!(keystore.encrypt_archive_name(&self.name));
+		let encrypted_name = keystore.encrypt_archive_name(&self.name)?;
 
 		let encoded = serde_json::to_vec(&self).expect("internal error");   // Serde shouldn't fail here
 		let compressed = lzma::compress(&encoded, 9 | lzma::EXTREME_PRESET).expect("internal error");  // Compression shouldn't fail
@@ -55,9 +55,9 @@ impl Archive {
 	}
 
 	pub fn decrypt(encrypted_name: &EncryptedArchiveName, encrypted_archive: &EncryptedArchive, keystore: &KeyStore) -> Result<Archive> {
-		let compressed = try!(keystore.decrypt_archive(encrypted_name, encrypted_archive));
+		let compressed = keystore.decrypt_archive(encrypted_name, encrypted_archive)?;
 
-		let decompressed = try!(lzma::decompress(&compressed).map_err(|_| Error::CorruptArchiveFailedDecompression));
+		let decompressed = lzma::decompress(&compressed).map_err(|_| Error::CorruptArchiveFailedDecompression)?;
 		serde_json::from_slice(&decompressed).map_err(|_| Error::CorruptArchiveBadJson)
 	}
 }

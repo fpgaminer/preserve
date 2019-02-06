@@ -24,20 +24,20 @@ impl<'a> BlockStore<'a> {
 		let block_secret = self.keystore.block_secret_from_block(plaintext);
 		let block_id = self.keystore.block_id_from_block_secret(&block_secret);
 
-		if try!(backend.block_exists(&block_id)) {
+		if backend.block_exists(&block_id)? {
 			return Ok(block_secret);
 		}
 
 		let encrypted_block = self.keystore.encrypt_block(&block_id, &block_secret, plaintext);
 
-		try!(backend.store_block(&block_id, &encrypted_block));
+		backend.store_block(&block_id, &encrypted_block)?;
 
 		Ok(block_secret)
 	}
 
 	pub fn fetch_block(&self, secret: &Secret, backend: &mut Backend) -> Result<Vec<u8>> {
 		let block_id = self.keystore.block_id_from_block_secret(secret);
-		let encrypted_block = try!(backend.fetch_block(&block_id));
+		let encrypted_block = backend.fetch_block(&block_id)?;
 
 		self.keystore.decrypt_block(secret, &block_id, &encrypted_block)
 	}

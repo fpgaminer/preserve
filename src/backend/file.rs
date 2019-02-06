@@ -1,7 +1,7 @@
 use backend::Backend;
 use keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
 use std::path::{Path, PathBuf};
-use std::io::{BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::fs::{self, OpenOptions};
 use rand::rngs::OsRng;
 use rand::Rng;
@@ -32,20 +32,20 @@ impl FileBackend {
 		};
 
 		{
-			let mut file = try!(OpenOptions::new().write(true).create(true).open(&temppath));
+			let mut file = OpenOptions::new().write(true).create(true).open(&temppath)?;
 
-			try!(file.write_all(data));
+			file.write_all(data)?;
 		}
 
 		// Archives and Blocks should be stored as world readonly
-		try!(fs::set_permissions(&temppath, PermissionsExt::from_mode(0o444)));
+		fs::set_permissions(&temppath, PermissionsExt::from_mode(0o444))?;
 
 		// Ensure that temppath and the destination are both on the same device so that rename
 		// below is an atomic move operation, rather than a copy.
 		{
-			let temppath_metadata = try!(temppath.metadata());
-			let destination_parent = try!(destination.as_ref().parent().ok_or(Error::BackendOnDifferentDevices));
-			let destination_parent_metadata = try!(destination_parent.metadata());
+			let temppath_metadata = temppath.metadata()?;
+			let destination_parent = destination.as_ref().parent().ok_or(Error::BackendOnDifferentDevices)?;
+			let destination_parent_metadata = destination_parent.metadata()?;
 			if temppath_metadata.dev() != destination_parent_metadata.dev() {
 				return Err(Error::BackendOnDifferentDevices);
 			}
@@ -53,7 +53,7 @@ impl FileBackend {
 
 		// Then move the file to its final destination.  This avoids any truncation in case of early
 		// termination/crash.
-		try!(fs::rename(temppath, destination));
+		fs::rename(temppath, destination)?;
 
 		Ok(())
 	}
@@ -94,11 +94,11 @@ impl Backend for FileBackend {
 		let dir2 = &block_id[2..4];
 
 		let path = self.backup_dir.join("blocks").join(dir1).join(dir2).join(&block_id);
-		let mut file = try!(fs::File::open(path));
+		let mut file = fs::File::open(path)?;
 
 		let mut ciphertext = Vec::<u8>::new();
 
-		try!(file.read_to_end(&mut ciphertext));
+		file.read_to_end(&mut ciphertext)?;
 
 		Ok(EncryptedBlock(ciphertext))
 	}
@@ -107,9 +107,10 @@ impl Backend for FileBackend {
 		let path = self.backup_dir.join("archives").join(name.to_string());
 
 		let mut buffer = vec![0u8; 0];
-		let mut reader = BufReader::new(try!(fs::File::open(path)));
+		let mut file = fs::File::open(path)?;
 
-		try!(reader.read_to_end(&mut buffer));
+		file.read_to_end(&mut buffer)?;
+
 		Ok(EncryptedArchive(buffer))
 	}
 
@@ -130,11 +131,11 @@ impl Backend for FileBackend {
 	fn list_archives(&mut self) -> Result<Vec<EncryptedArchiveName>> {
 		let mut archives = Vec::new();
 
-		for entry in try!(fs::read_dir(self.backup_dir.join("archives"))) {
-			let entry = try!(entry);
+		for entry in fs::read_dir(self.backup_dir.join("archives"))? {
+			let entry = entry?;
 			let filename = entry.file_name();
-			let filename_str = try!(filename.to_str().ok_or(Error::InvalidArchiveName));
-			let encrypted_archive_name = try!(EncryptedArchiveName::from_str(filename_str).map_err(|_| Error::InvalidArchiveName));
+			let filename_str = filename.to_str().ok_or(Error::InvalidArchiveName)?;
+			let encrypted_archive_name = EncryptedArchiveName::from_str(filename_str).map_err(|_| Error::InvalidArchiveName)?;
 
 			archives.push(encrypted_archive_name);
 		}
