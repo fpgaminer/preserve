@@ -1,4 +1,4 @@
-use crate::keystore::{KeyStore, EncryptedArchiveName, EncryptedArchive, Secret};
+use crate::keystore::{BlockId, KeyStore, ArchiveId, EncryptedArchiveName, EncryptedArchiveMetadata};
 use lzma;
 use crate::error::*;
 use serde_derive::{Serialize, Deserialize};
@@ -25,8 +25,8 @@ pub struct File {
 	pub gid: u32,
 	/// File size
 	pub size: u64,
-	/// Data blocks (list of block secrets)
-	pub blocks: Vec<Secret>,
+	/// Data blocks (list of block ids)
+	pub blocks: Vec<BlockId>,
 }
 
 
@@ -45,19 +45,18 @@ pub struct Archive {
 
 
 impl Archive {
-	pub fn encrypt(self, keystore: &KeyStore) -> Result<(EncryptedArchiveName, EncryptedArchive)> {
-		let encrypted_name = keystore.encrypt_archive_name(&self.name)?;
+	pub fn encrypt(self, keystore: &KeyStore) -> Result<(ArchiveId, EncryptedArchiveName, EncryptedArchiveMetadata)> {
+		let (archive_id, encrypted_name) = keystore.encrypt_archive_name(&self.name);
 
-		let encoded = serde_json::to_vec(&self).expect("internal error");   // Serde shouldn't fail here
+		let encoded = serde_json::to_vec(&self).expect("internal error");   // Serde shouldn't fail
 		let compressed = lzma::compress(&encoded, 9 | lzma::EXTREME_PRESET).expect("internal error");  // Compression shouldn't fail
-		let encrypted_archive = keystore.encrypt_archive(&encrypted_name, &compressed);
+		let encrypted_archive = keystore.encrypt_archive_metadata(&archive_id, &compressed);
 
-		Ok((encrypted_name, encrypted_archive))
+		Ok((archive_id, encrypted_name, encrypted_archive))
 	}
 
-	pub fn decrypt(encrypted_name: &EncryptedArchiveName, encrypted_archive: &EncryptedArchive, keystore: &KeyStore) -> Result<Archive> {
-		let compressed = keystore.decrypt_archive(encrypted_name, encrypted_archive)?;
-
+	pub fn decrypt(archive_id: &ArchiveId, encrypted_archive: &EncryptedArchiveMetadata, keystore: &KeyStore) -> Result<Archive> {
+		let compressed = keystore.decrypt_archive_metadata(archive_id,  encrypted_archive)?;
 		let decompressed = lzma::decompress(&compressed).map_err(|_| Error::CorruptArchiveFailedDecompression)?;
 		serde_json::from_slice(&decompressed).map_err(|_| Error::CorruptArchiveBadJson)
 	}

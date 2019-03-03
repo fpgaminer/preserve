@@ -1,4 +1,4 @@
-This test suite uses Docker containers to do integration testing of Preserve.  The Rust driven integration testing cannot fully isolate Preserve during tests, so it can't, for example, muck around with the OS itself, install packages, etc.  This Docker based integration test can install packages in the container, back them up, and then do a restore in a fresh container to see if Preserve restores those system files.  This is a nice way to do testing that is more akin to the real world.
+This test suite uses Docker containers to do integration testing of Preserve.  The Rust driven integration testing cannot fully isolate Preserve during tests, so it can't, for example, muck around with the OS itself, install packages, etc.  This Docker based integration test can install packages in the container, back them up, and then do a restore in a fresh container to see if Preserve restores those system files.  This is a nice way to do testing that is more akin to the real world (Preserve isn't really designed to backup packages, but it's a good test of its flexibility).
 
 
 How it works:

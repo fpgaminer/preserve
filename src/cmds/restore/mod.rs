@@ -1,7 +1,6 @@
-use crate::keystore::{KeyStore, Secret, BlockId};
+use crate::keystore::{KeyStore, BlockId};
 use std::fs;
 use std::io::{self, BufWriter, Write, Read};
-use crate::block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::PermissionsExt;
 use std::collections::HashMap;
@@ -15,7 +14,6 @@ use log::{error, info};
 struct DownloadCache {
 	refcount: u64,
 	downloaded: bool,
-	secret: Secret,
 	id: BlockId,
 }
 
@@ -42,11 +40,6 @@ pub fn execute(args: &ArgMatches) {
 		None => PathBuf::new(),
 	};
 
-	if backup_name.as_bytes().len() >= 128 {
-		error!("Backup name must be less than 128 bytes (UTF-8)");
-		return;
-	}
-
 	let keystore = match KeyStore::load_from_path(args_keyfile) {
 		Ok(keystore) => keystore,
 		Err(err) => {
@@ -54,8 +47,6 @@ pub fn execute(args: &ArgMatches) {
 			return;
 		}
 	};
-
-	let block_store = BlockStore::new(&keystore);
 
 	let mut backend = match backend::backend_from_backend_path(args_backend) {
 		Ok(backend) => backend,
@@ -69,14 +60,8 @@ pub fn execute(args: &ArgMatches) {
 
 	config.dereference_hardlinks = args.is_present("hard-dereference");
 
-	let encrypted_archive_name = match keystore.encrypt_archive_name(&backup_name) {
-		Ok(name) => name,
-		Err(err) => {
-			error!("There was a problem with the backup name: {}", err);
-			return;
-		},
-	};
-	let encrypted_archive = match backend.fetch_archive(&encrypted_archive_name) {
+	let (archive_id, _) = keystore.encrypt_archive_name(&backup_name);
+	let encrypted_archive = match backend.fetch_archive(&archive_id) {
 		Ok(archive) => archive,
 		Err(err) => {
 			error!("There was a problem fetching the backup: {}", err);
@@ -85,7 +70,7 @@ pub fn execute(args: &ArgMatches) {
 	};
 
 	if debug_decrypt {
-		let decrypted = match keystore.decrypt_archive(&encrypted_archive_name, &encrypted_archive) {
+		let decrypted = match keystore.decrypt_archive_metadata(&archive_id, &encrypted_archive) {
 			Ok(archive) => archive,
 			Err(err) => {
 				error!("There was a problem decrypting the backup: {}", err);
@@ -96,7 +81,7 @@ pub fn execute(args: &ArgMatches) {
 		return;
 	}
 
-	let archive = match Archive::decrypt(&encrypted_archive_name, &encrypted_archive, &keystore) {
+	let archive = match Archive::decrypt(&archive_id, &encrypted_archive, &keystore) {
 		Ok(archive) => archive,
 		Err(err) => {
 			error!("There was a problem decrypting the backup: {}", err);
@@ -118,7 +103,7 @@ pub fn execute(args: &ArgMatches) {
 	};
 	let mut download_cache = HashMap::new();
 
-	match build_block_refcounts(&archive.files, &keystore, &mut download_cache) {
+	match build_block_refcounts(&archive.files, &mut download_cache) {
 		Ok(x) => x,
 		Err(err) => {
 			error!("There was a problem reading the backup: {}", err);
@@ -126,7 +111,7 @@ pub fn execute(args: &ArgMatches) {
 		},
 	}
 
-	match extract_files(&config, &archive.files, target_directory, &block_store, download_cache_dir.path(), &mut download_cache, &mut *backend) {
+	match extract_files(&config, &archive.files, target_directory, &keystore, download_cache_dir.path(), &mut download_cache, &mut *backend) {
 		Ok(x) => x,
 		Err(err) => {
 			error!("There was a problem extracting the backup: {}", err);
@@ -146,33 +131,30 @@ struct Config {
 }
 
 
-fn build_block_refcounts(files: &[File], keystore: &KeyStore, download_cache: &mut HashMap<Secret, DownloadCache>) -> Result<()> {
+fn build_block_refcounts(files: &[File], download_cache: &mut HashMap<BlockId, DownloadCache>) -> Result<()> {
 	for file in files {
-		build_block_refcounts_helper(file, keystore, download_cache)?;
+		build_block_refcounts_helper(file, download_cache)?;
 	}
 
 	Ok(())
 }
 
 
-fn build_block_refcounts_helper(file: &File, keystore: &KeyStore, download_cache: &mut HashMap<Secret, DownloadCache>) -> Result<()> {
-	for secret in &file.blocks {
-		let block_id = keystore.block_id_from_block_secret(&secret);
-
-		download_cache.entry(secret.clone()).or_insert(DownloadCache{
+fn build_block_refcounts_helper(file: &File, download_cache: &mut HashMap<BlockId, DownloadCache>) -> Result<()> {
+	for block_id in &file.blocks {
+		download_cache.entry(block_id.clone()).or_insert(DownloadCache{
 			refcount: 0,
 			downloaded: false,
-			id: block_id,
-			secret: secret.clone(),
+			id: block_id.clone(),
 		});
-		download_cache.get_mut(secret).expect("internal error").refcount += 1;
+		download_cache.get_mut(block_id).expect("internal error").refcount += 1;
 	}
 
 	Ok(())
 }
 
 
-fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<()> {
+fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut Backend) -> Result<()> {
 	let mut hardlink_map: HashMap<u64, PathBuf> = HashMap::new();
 	// List of all directories and the mtimes they need set.
 	// We set these after extracting all files, since extracting the files changes the mtime of
@@ -214,7 +196,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 			if !hardlinked {
 				info!("Writing file: {}", filepath.display());
 				// We set permissions after creating the file because `open` uses umask.
-				extract_file(&filepath, file, block_store, cache_dir, download_cache, backend)?;
+				extract_file(&filepath, file, keystore, cache_dir, download_cache, backend)?;
 				fs::set_permissions(&filepath, fs::Permissions::from_mode(file.mode))?;
 
 				if !config.dereference_hardlinks {
@@ -240,14 +222,14 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 }
 
 
-fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<()> {
+fn extract_file<P: AsRef<Path>>(path: P, f: &File, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut Backend) -> Result<()> {
 	// Don't overwrite existing files
 	let file = fs::OpenOptions::new().write(true).create_new(true).open(path.as_ref())?;
 	let mut writer = BufWriter::new(&file);
 	let mut total_written = 0;
 
-	for secret in &f.blocks {
-		let plaintext = cache_fetch(secret, block_store, cache_dir, download_cache, backend)?;
+	for block_id in &f.blocks {
+		let plaintext = cache_fetch(block_id, keystore, cache_dir, download_cache, backend)?;
 
 		writer.write_all(&plaintext)?;
 		total_written += plaintext.len();
@@ -261,8 +243,8 @@ fn extract_file<P: AsRef<Path>>(path: P, f: &File, block_store: &BlockStore, cac
 }
 
 
-fn cache_fetch(secret: &Secret, block_store: &BlockStore, cache_dir: &Path, download_cache: &mut HashMap<Secret, DownloadCache>, backend: &mut Backend) -> Result<Vec<u8>> {
-	let cache = download_cache.get_mut(secret).expect("internal error");
+fn cache_fetch(block_id: &BlockId, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut Backend) -> Result<Vec<u8>> {
+	let cache = download_cache.get_mut(block_id).expect("internal error");
 	let path = cache_dir.join(cache.id.to_string());
 
 	if cache.downloaded {
@@ -281,7 +263,8 @@ fn cache_fetch(secret: &Secret, block_store: &BlockStore, cache_dir: &Path, down
 
 		Ok(plaintext)
 	} else {
-		let plaintext = block_store.fetch_block(&cache.secret, backend)?;
+		let encrypted_block = backend.fetch_block(&cache.id)?;
+		let plaintext = keystore.decrypt_block(&cache.id, &encrypted_block)?;
 
 		cache.refcount -=1;
 		cache.downloaded = true;

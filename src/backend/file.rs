@@ -1,5 +1,5 @@
 use crate::backend::Backend;
-use crate::keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
+use crate::keystore::{ArchiveId, EncryptedArchiveName, EncryptedArchiveMetadata, EncryptedBlock, BlockId};
 use std::path::{Path, PathBuf};
 use std::io::{Read, Write};
 use std::fs::{self, OpenOptions};
@@ -70,7 +70,7 @@ impl Backend for FileBackend {
 		Ok(path.exists())
 	}
 
-	fn store_block(&mut self, id: &BlockId, &EncryptedBlock(ref data): &EncryptedBlock) -> Result<()> {
+	fn store_block(&mut self, id: &BlockId, data: &EncryptedBlock) -> Result<()> {
 		let block_id = id.to_string();
 		let dir1 = &block_id[0..2];
 		let dir2 = &block_id[2..4];
@@ -85,7 +85,7 @@ impl Backend for FileBackend {
 			return Ok(());
 		}
 
-		self.safely_write_file(path, data)
+		self.safely_write_file(path, &data.0)
 	}
 
 	fn fetch_block(&mut self, id: &BlockId) -> Result<EncryptedBlock> {
@@ -103,41 +103,46 @@ impl Backend for FileBackend {
 		Ok(EncryptedBlock(ciphertext))
 	}
 
-	fn fetch_archive(&mut self, name: &EncryptedArchiveName) -> Result<EncryptedArchive> {
-		let path = self.backup_dir.join("archives").join(name.to_string());
+	fn fetch_archive(&mut self, id: &ArchiveId) -> Result<EncryptedArchiveMetadata> {
+		let path = self.backup_dir.join("archives").join(format!("{}.metadata", id.to_string()));
 
-		let mut buffer = vec![0u8; 0];
-		let mut file = fs::File::open(path)?;
+		let data = fs::read(path)?;
 
-		file.read_to_end(&mut buffer)?;
-
-		Ok(EncryptedArchive(buffer))
+		Ok(EncryptedArchiveMetadata(data))
 	}
 
-	fn store_archive(&mut self, name: &EncryptedArchiveName, &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<()> {
-		let path = {
-			let path = self.backup_dir.join("archives");
-			fs::create_dir_all(&path).unwrap_or(());
-			path.join(name.to_string())
-		};
+	fn store_archive(&mut self, id: &ArchiveId, name: &EncryptedArchiveName, data: &EncryptedArchiveMetadata) -> Result<()> {
+		let name_path = self.backup_dir.join("archives").join(format!("{}.name", id.to_string()));
+		let metadata_path = self.backup_dir.join("archives").join(format!("{}.metadata", id.to_string()));
+		fs::create_dir_all(&self.backup_dir.join("archives")).unwrap_or(());
 
-		if path.exists() {
+		// TODO: Right now there is a race condition here.  This will be fixed in the future when we add a SQLite database for managing refcounts and other atomic things.
+		if name_path.exists() {
 			return Err(Error::ArchiveNameConflict);
 		}
 
-		self.safely_write_file(path, payload)
+		self.safely_write_file(name_path, &name.0)?;
+		self.safely_write_file(metadata_path, &data.0)
 	}
 
-	fn list_archives(&mut self) -> Result<Vec<EncryptedArchiveName>> {
+	fn list_archives(&mut self) -> Result<Vec<(ArchiveId, EncryptedArchiveName)>> {
 		let mut archives = Vec::new();
 
 		for entry in fs::read_dir(self.backup_dir.join("archives"))? {
-			let entry = entry?;
-			let filename = entry.file_name();
-			let filename_str = filename.to_str().ok_or(Error::InvalidArchiveName)?;
-			let encrypted_archive_name = EncryptedArchiveName::from_str(filename_str).map_err(|_| Error::InvalidArchiveName)?;
+			let path = entry?.path();
 
-			archives.push(encrypted_archive_name);
+			let extension = path.extension().ok_or(Error::InvalidArchiveId)?;
+			if extension != "name" {
+				continue;
+			}
+
+			let filename = path.file_stem().ok_or(Error::InvalidArchiveId)?;
+			let filename_str = filename.to_str().ok_or(Error::InvalidArchiveId)?;
+			let archive_id = ArchiveId::from_str(filename_str).map_err(|_| Error::InvalidArchiveId)?;
+			let data = fs::read(path)?;
+			let encrypted_archive_name = EncryptedArchiveName(data);
+
+			archives.push((archive_id, encrypted_archive_name));
 		}
 
 		Ok(archives)

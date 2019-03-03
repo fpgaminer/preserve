@@ -1,144 +1,181 @@
 use std::io::{self, BufReader};
-use crypto;
+use crypto::pbkdf2::pbkdf2;
 use crypto::chacha20::ChaCha20;
 use crypto::hmac::Hmac;
-use crypto::sha2::Sha256;
-use crypto::mac::{Mac, MacResult};
+use crypto::sha2::Sha512;
+use crypto::mac::Mac;
 use crypto::symmetriccipher::SynchronousStreamCipher;
-use crypto::curve25519;
 use std::str::FromStr;
 use crate::error::*;
 use std::path::Path;
 use std::fs;
-use data_encoding::{BASE64URL, HEXLOWER_PERMISSIVE};
+use data_encoding::HEXLOWER_PERMISSIVE;
 use rand::rngs::OsRng;
-use serde_derive::{Serialize, Deserialize};
 
 
-new_type!{
-	secret HmacKey(64);
-}
+// We liberally use newtypes to help prevent accidentally mixing up data, and making it more explicit what kind of data
+// functions accept and return.  For example, you don't want to decrypt block data as if it were archive data.
+new_type!{ secret HmacKey(128); }
+new_type!{ public BlockId(32); }
+new_type!{ public ArchiveId(32); }
+new_type!{ public SIV(32); }
 
-new_type!{
-	secret Curve25519PrivateKey(32);
-}
-
-new_type!{
-	public Curve25519PublicKey(32);
-}
-
-new_type!{
-	secret ChaCha20Key(32);
-}
-
-new_type!{
-	secret ChaCha20Nonce(8);
-}
-
-#[derive(Serialize, Deserialize)]
-struct EncryptionKey {
-	key: ChaCha20Key,
-	nonce: ChaCha20Nonce,
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-struct KdfKey {
-	key_key: HmacKey,
-	nonce_key: HmacKey,
-}
-
-impl KdfKey {
-	fn from_rng(rng: &mut OsRng) -> KdfKey {
-		KdfKey {
-			key_key: HmacKey::from_rng(rng),
-			nonce_key: HmacKey::from_rng(rng),
-		}
+impl ToString for BlockId {
+	fn to_string(&self) -> String {
+		HEXLOWER_PERMISSIVE.encode(&self.0)
 	}
 }
 
-new_type!{
-	secret Secret(32);
-}
-
-// TODO: Restore and Verify need this implementation.  Not too keen on having it ... is there a better way?
-impl std::hash::Hash for Secret {
-	fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-		std::hash::Hash::hash(&self.0[..], state)
+impl ToString for ArchiveId {
+	fn to_string(&self) -> String {
+		HEXLOWER_PERMISSIVE.encode(&self.0)
 	}
 }
 
-new_type!{
-	public BlockId(32);
+impl FromStr for ArchiveId {
+	type Err = Error;
+
+	fn from_str(s: &str) -> ::std::result::Result<ArchiveId, Self::Err> {
+		let v = HEXLOWER_PERMISSIVE.decode(s.as_bytes()).map_err(|_| Error::InvalidArchiveId)?;
+
+		ArchiveId::from_slice(&v).ok_or(Error::InvalidArchiveId)
+	}
 }
 
 pub struct EncryptedArchiveName(pub Vec<u8>);
-#[derive(PartialEq, Debug)]
 pub struct EncryptedBlock(pub Vec<u8>);
-pub struct EncryptedArchive(pub Vec<u8>);
+pub struct EncryptedArchiveMetadata(pub Vec<u8>);
 
 
-// We use lots of keying data because it's cheap to do so, adds lots of entropy to the system,
-// and provides extra layers of protection in case a key is accidentally leaked or improperly
-// used.
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct KeyStore {
-	/// Used to calculate the block secret from a block's plaintext.
-	block_secret_key: HmacKey,
-	/// Used to calculate the block's id from the secret
-	block_id_key: HmacKey,
-	/// Used to calculate the encryption key from secret
-	block_kdf_key: KdfKey,
-	/// Used to calculate the HMAC of an encrypted block
-	block_hmac_key: HmacKey,
+#[derive(PartialEq)]
+struct SivEncryptionKeys {
+	/// Used to calculate the siv for plaintext
+	siv_key: HmacKey,
+	/// The cipher key
+	cipher_key: HmacKey,
+}
 
-	// TODO: This should be kept encrypted
-	/// Curve25519 private key; used to decrypt archives
-	archive_private_key: Curve25519PrivateKey,
-	/// Curve25519 public key; used to encrypt archives
-	archive_public_key: Curve25519PublicKey,
-	/// Used to calculate encryption key from Curve25519 shared secret
-	archive_kdf_key: KdfKey,
-	/// Used to calculate MAC of encrypted archives
-	archive_hmac_key: HmacKey,
+impl SivEncryptionKeys {
+	fn encrypt(&self, aad: &[u8], plaintext: &[u8]) -> (SIV, Vec<u8>) {
+		let siv = self.calculate_siv(aad, plaintext);
+		let ciphertext = self.cipher(&siv, plaintext);
 
-	/// Used to calculate archive id
-	archive_name_id_key: HmacKey,
-	/// Used to calculate the archive name encryption key from the archive id
-	archive_name_kdf_key: KdfKey,
-	/// Used to calculate the HMAC of the encrypted archive name
-	archive_name_hmac_key: HmacKey,
+		(siv, ciphertext)
+	}
+
+	fn decrypt(&self, aad: &[u8], siv: &SIV, ciphertext: &[u8]) -> Option<Vec<u8>> {
+		let plaintext = self.cipher(siv, ciphertext);
+		let expected_siv = self.calculate_siv(aad, &plaintext);
+
+		if !siv.constant_eq(&expected_siv) {
+			return None;
+		}
+
+		Some(plaintext)
+	}
+
+	fn cipher(&self, nonce: &SIV, data: &[u8]) -> Vec<u8> {
+		let big_key = {
+			let mut hmac = Hmac::new(Sha512::new(), &self.cipher_key[..]);
+			hmac.input(&nonce[..]);
+			hmac.result()
+		};
+		let (chacha_key, chacha_nonce) = big_key.code().split_at(32);
+
+		// Using slice notation here so this code panics in case we accidentally didn't derive the right size big_key
+		let mut encryptor = ChaCha20::new(&chacha_key[..32], &chacha_nonce[..8]);
+		let mut output = vec!(0u8; data.len());
+		encryptor.process(data, &mut output);
+		output
+	}
+
+	fn calculate_siv(&self, aad: &[u8], plaintext: &[u8]) -> SIV {
+		assert!(std::mem::size_of::<u64>() >= std::mem::size_of::<usize>());
+
+		let mut hmac = Hmac::new(Sha512::new(), &self.siv_key[..]);
+		hmac.input(aad);
+		hmac.input(plaintext);
+		hmac.input(&(aad.len() as u64).to_le_bytes());
+		hmac.input(&(plaintext.len() as u64).to_le_bytes());
+
+		// Truncated to 256-bits
+		SIV::from_slice(&hmac.result().code()[..32]).expect("internal error")
+	}
+
+	fn from_slice(bs: &[u8]) -> Option<SivEncryptionKeys> {
+		if bs.len() != 256 {
+			return None;
+		}
+
+		let (siv_key, cipher_key) = bs.split_at(128);
+
+		Some(SivEncryptionKeys {
+			siv_key: HmacKey::from_slice(siv_key)?,
+			cipher_key: HmacKey::from_slice(cipher_key)?,
+		})
+    }
 }
 
 
+#[derive(PartialEq)]
+pub struct KeyStore {
+	/// The key all other keys are derived from.  This is the only value that needs to be saved and loaded.
+	master_key: HmacKey,
+
+	block_keys: SivEncryptionKeys,
+	archive_name_keys: SivEncryptionKeys,
+	blocklist_keys: SivEncryptionKeys,
+	metadata_keys: SivEncryptionKeys,
+}
+
 impl KeyStore {
+	/// Create a new, random, KeyStore
 	pub fn new() -> KeyStore {
 		let mut rng = OsRng::new().expect("OsRng failed to initialize");
-		let archive_private_key = Curve25519PrivateKey::from_rng(&mut rng);
-		let archive_public_key = crypto::curve25519::curve25519_base(&archive_private_key[..]);
+		let master_key = HmacKey::from_rng(&mut rng);
+
+		KeyStore::from_master_key(master_key)
+	}
+
+	/// Derive the KeyStore from master_key
+	pub fn from_master_key(master_key: HmacKey) -> KeyStore {
+		let raw_keys = {
+			let mut raw_keys = vec![0u8; 4 * 256];
+			let mut hmac = Hmac::new(Sha512::new(), &master_key[..]);
+			pbkdf2(&mut hmac, &[], 1, &mut raw_keys);
+			raw_keys
+		};
+
+		let (block_keys, raw_keys) = raw_keys.split_at(256);
+		let (archive_name_keys, raw_keys) = raw_keys.split_at(256);
+		let (blocklist_keys, raw_keys) = raw_keys.split_at(256);
+		let (metadata_keys, _) = raw_keys.split_at(256);
 
 		KeyStore {
-			block_secret_key: HmacKey::from_rng(&mut rng),
-			block_id_key: HmacKey::from_rng(&mut rng),
-			block_kdf_key: KdfKey::from_rng(&mut rng),
-			block_hmac_key: HmacKey::from_rng(&mut rng),
+			master_key,
 
-			archive_private_key: archive_private_key,
-			archive_public_key: Curve25519PublicKey::from_slice(&archive_public_key).expect("internal error"),
-			archive_kdf_key: KdfKey::from_rng(&mut rng),
-			archive_hmac_key: HmacKey::from_rng(&mut rng),
-
-			archive_name_id_key: HmacKey::from_rng(&mut rng),
-			archive_name_kdf_key: KdfKey::from_rng(&mut rng),
-			archive_name_hmac_key: HmacKey::from_rng(&mut rng),
+			block_keys: SivEncryptionKeys::from_slice(block_keys).expect("internal error"),
+			archive_name_keys: SivEncryptionKeys::from_slice(archive_name_keys).expect("internal error"),
+			blocklist_keys: SivEncryptionKeys::from_slice(blocklist_keys).expect("internal error"),
+			metadata_keys: SivEncryptionKeys::from_slice(metadata_keys).expect("internal error"),
 		}
 	}
 
-	pub fn save<W: io::Write>(&self, writer: W) -> Result<()> {
-		Ok(serde_json::to_writer_pretty(writer, &self)?)
+	/// Save this KeyStore to writer.  This writes a hex encoded 1024-bit master key.
+	pub fn save<W: io::Write>(&self, mut writer: W) -> Result<()> {
+		Ok(writer.write_all(HEXLOWER_PERMISSIVE.encode(&self.master_key[..]).as_bytes())?)
 	}
 
-	pub fn load<R: io::Read>(reader: R) -> Result<KeyStore> {
-		Ok(serde_json::from_reader(reader)?)
+	/// Load KeyStore from reader.  Expects a hex encoded 1024-bit master key, from which the KeyStore is derived.
+	pub fn load<R: io::Read>(mut reader: R) -> Result<KeyStore> {
+		let mut hexbytes = [0u8; 256];
+
+		reader.read_exact(&mut hexbytes)?;
+
+		let slice = HEXLOWER_PERMISSIVE.decode(&hexbytes).map_err(|_| Error::CorruptKeystore)?;
+		let master_key = HmacKey::from_slice(&slice).ok_or(Error::CorruptKeystore)?;
+
+		Ok(KeyStore::from_master_key(master_key))
 	}
 
 	pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<KeyStore> {
@@ -148,424 +185,247 @@ impl KeyStore {
 		KeyStore::load(&mut reader)
 	}
 
-	/// The maximum supported name is 127 bytes long (UTF-8 encoded).
-	/// Encrypted file names will never exceed 255 bytes.
-	/// Encrypted file names are base64 encoded.
-	/// The underlying data is completely opaque (hmac + cipthertext + hmac)
-	/// Encrypted file names are deterministic, i.e. the same name fed into this function will
-	/// always return the same result (with respect to the KeyStore).
-	pub fn encrypt_archive_name(&self, name: &str) -> Result<EncryptedArchiveName> {
-		let plaintext = name.as_bytes();
+	pub fn encrypt_block(&self, block: &[u8]) -> (BlockId, EncryptedBlock) {
+		let (id, ciphertext) = self.block_keys.encrypt(&[], block);
 
-		if plaintext.len() >= 128 {
-			return Err(Error::ArchiveNameTooLong);
-		}
-
-		let id = Secret::from_slice(hmac(&self.archive_name_id_key, plaintext).code()).expect("internal error");
-		let encryption_key = kdf(&self.archive_name_kdf_key, &id);
-		let ciphertext = encrypt(&encryption_key, plaintext);
-
-		let mut payload = vec![0u8; 0];
-		payload.extend_from_slice(&id[..]);
-		payload.extend_from_slice(&ciphertext);
-		let mac = hmac(&self.archive_name_hmac_key, &payload).code().to_vec();
-
-		payload.extend_from_slice(&mac);
-
-		Ok(EncryptedArchiveName(payload))
+		(BlockId(id.0), EncryptedBlock(ciphertext))
 	}
 
-	pub fn decrypt_archive_name(&self, &EncryptedArchiveName(ref payload): &EncryptedArchiveName) -> Result<String> {
-		if payload.len() < (32+32) {
-			return Err(Error::CorruptArchiveName);
-		}
+	pub fn decrypt_block(&self, block_id: &BlockId, encrypted_block: &EncryptedBlock) -> Result<Vec<u8>> {
+		self.block_keys.decrypt(&[], &SIV(block_id.clone().0), &encrypted_block.0).ok_or(Error::CorruptBlock)
+	}
 
-		let payload = {
-			let mac = MacResult::new(&payload[payload.len()-32..]);
-			let calculated_hmac = hmac(&self.archive_name_hmac_key, &payload[..payload.len()-32]);
+	pub fn encrypt_archive_name(&self, name: &str) -> (ArchiveId, EncryptedArchiveName) {
+		let (id, ciphertext) = self.archive_name_keys.encrypt(&[], name.as_bytes());
 
-			if calculated_hmac != mac {
-				return Err(Error::CorruptArchiveName);
-			}
+		(ArchiveId(id.0), EncryptedArchiveName(ciphertext))
+	}
 
-			&payload[..payload.len()-32]
-		};
-
-		let id = Secret::from_slice(&payload[..32]).expect("internal error");
-		let encryption_key = kdf(&self.archive_name_kdf_key, &id);
-		let ciphertext = &payload[32..];
-
-		let plaintext = encrypt(&encryption_key, ciphertext);
+	pub fn decrypt_archive_name(&self, archive_id: &ArchiveId, encrypted_name: &EncryptedArchiveName) -> Result<String> {
+		let plaintext = self.archive_name_keys.decrypt(&[], &SIV(archive_id.clone().0), &encrypted_name.0).ok_or(Error::CorruptArchiveName)?;
 
 		String::from_utf8(plaintext).map_err(|_| Error::CorruptArchiveName)
 	}
 
-	pub fn encrypt_archive(&self, &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName, archive: &[u8]) -> EncryptedArchive {
-		let ephemeral_private_key: Curve25519PrivateKey = {
-			let mut rng = OsRng::new().expect("OsRng failed to initialize");
-			Curve25519PrivateKey::from_rng(&mut rng)
-		};
-		let ephemeral_public_key = Curve25519PublicKey::from_slice(&curve25519::curve25519_base(&ephemeral_private_key[..])).expect("internal error");
+	pub fn encrypt_archive_metadata(&self, archive_id: &ArchiveId, metadata: &[u8]) -> EncryptedArchiveMetadata {
+		let (metadata_siv, encrypted_metadata) = self.metadata_keys.encrypt(&archive_id[..], metadata);
+		let mut result = Vec::new();
 
-		let encryption_key = {
-			let shared_secret = Secret::from_slice(&curve25519::curve25519(&ephemeral_private_key[..], &self.archive_public_key[..])).expect("internal error");
-			kdf(&self.archive_kdf_key, &shared_secret)
-		};
+		result.extend_from_slice(&metadata_siv[..]);
+		result.extend_from_slice(&encrypted_metadata);
 
-		let ciphertext = encrypt(&encryption_key, archive);
-
-		let mut payload = vec![0u8; 0];
-		payload.extend_from_slice(&ephemeral_public_key[..]);
-		payload.extend_from_slice(&ciphertext);
-
-		let mac = {
-			let mut buffer = vec![0u8; 0];
-			buffer.extend_from_slice(encrypted_archive_name);
-			buffer.extend_from_slice(&payload);
-			hmac(&self.archive_hmac_key, &buffer).code().to_vec()
-		};
-
-		payload.extend_from_slice(&mac);
-		EncryptedArchive(payload)
+		EncryptedArchiveMetadata(result)
 	}
 
-	pub fn decrypt_archive(&self, &EncryptedArchiveName(ref encrypted_archive_name): &EncryptedArchiveName, &EncryptedArchive(ref payload): &EncryptedArchive) -> Result<Vec<u8>> {
-		/* TODO: Nasty fat constants */
-		if payload.len() < 64 {
-			return Err(Error::CorruptArchiveTruncated);
+	pub fn decrypt_archive_metadata(&self, archive_id: &ArchiveId, encrypted_metadata: &EncryptedArchiveMetadata) -> Result<Vec<u8>> {
+		if encrypted_metadata.0.len() < 32 {
+			return Err(Error::CorruptArchiveMetadata);
 		}
 
-		let calculated_mac = {
-			let mut buffer = vec![0u8; 0];
-			buffer.extend_from_slice(&encrypted_archive_name);
-			buffer.extend_from_slice(&payload[..payload.len()-32]);
-			hmac(&self.archive_hmac_key, &buffer)
-		};
+		let (siv, ciphertext) = encrypted_metadata.0.split_at(32);
 
-		if calculated_mac != MacResult::new(&payload[payload.len()-32..]) {
-			return Err(Error::CorruptArchiveBadHmac);
-		}
-
-		let ephemeral_public_key = &payload[..32];
-		let ciphertext = &payload[32..payload.len()-32];
-
-		let encryption_key = {
-			let shared_secret = Secret::from_slice(&curve25519::curve25519(&self.archive_private_key[..], &ephemeral_public_key)).expect("internal error");
-			kdf(&self.archive_kdf_key, &shared_secret)
-		};
-
-		let plaintext = encrypt(&encryption_key, ciphertext);
-
-		Ok(plaintext)
-	}
-
-	pub fn block_id_from_block_secret(&self, block_secret: &Secret) -> BlockId {
-		BlockId::from_slice(hmac(&self.block_id_key, &block_secret[..]).code()).expect("internal error")
-	}
-
-	pub fn block_secret_from_block(&self, block: &[u8]) -> Secret {
-		Secret::from_slice(hmac(&self.block_secret_key, block).code()).expect("internal error")
-	}
-
-	pub fn encrypt_block(&self, id: &BlockId, secret: &Secret, block: &[u8]) -> EncryptedBlock {
-		let encryption_key = kdf(&self.block_kdf_key, &secret);
-		let ciphertext = encrypt(&encryption_key, block);
-
-		let mac = {
-			let mut buffer = vec![0u8; 0];
-			buffer.extend_from_slice(&id[..]);
-			buffer.extend_from_slice(&ciphertext);
-			hmac(&self.block_hmac_key, &buffer).code().to_vec()
-		};
-
-		let mut payload = vec![0u8; 0];
-		payload.extend_from_slice(&ciphertext);
-		payload.extend_from_slice(&mac);
-
-		EncryptedBlock(payload)
-	}
-
-	pub fn verify_encrypted_block(&self, id: &BlockId, encrypted_block: &EncryptedBlock) -> bool {
-		let &EncryptedBlock(ref payload) = encrypted_block;
-
-		// encrypted_block should at least contain a 32-byte MAC
-		if payload.len() < 32 {
-			return false;
-		}
-
-		let calculated_mac = {
-			let mut buffer = vec![0u8; 0];
-			buffer.extend_from_slice(&id[..]);
-			buffer.extend_from_slice(&payload[..payload.len()-32]);
-			hmac(&self.block_hmac_key, &buffer)
-		};
-
-		MacResult::new(&payload[payload.len()-32..]) == calculated_mac
-	}
-
-	pub fn decrypt_block(&self, secret: &Secret, id: &BlockId, encrypted_block: &EncryptedBlock) -> Result<Vec<u8>> {
-		let &EncryptedBlock(ref payload) = encrypted_block;
-
-		// Verify the block's authenticity and integrity
-		if !self.verify_encrypted_block(id, encrypted_block) {
-			return Err(Error::CorruptBlock);
-		}
-
-		let encryption_key = kdf(&self.block_kdf_key, secret);
-		let ciphertext = &payload[..payload.len()-32];
-		let plaintext = encrypt(&encryption_key, ciphertext);
+		let plaintext = self.metadata_keys.decrypt(&archive_id[..], &SIV::from_slice(siv).expect("internal error"), ciphertext).ok_or(Error::CorruptArchiveMetadata)?;
 
 		Ok(plaintext)
 	}
 }
 
-
-impl ToString for EncryptedArchiveName {
-	fn to_string(&self) -> String {
-		let &EncryptedArchiveName(ref payload) = self;
-
-		BASE64URL.encode(payload)
-	}
-}
-
-
-impl FromStr for EncryptedArchiveName {
-	type Err = data_encoding::DecodeError;
-
-	fn from_str(s: &str) -> ::std::result::Result<EncryptedArchiveName, Self::Err> {
-		Ok(EncryptedArchiveName(BASE64URL.decode(s.as_bytes())?))
-	}
-}
-
-
-impl ToString for BlockId {
-	fn to_string(&self) -> String {
-		let &BlockId(ref id) = self;
-
-		HEXLOWER_PERMISSIVE.encode(id)
-	}
-}
-
-
-fn hmac(key: &HmacKey, data: &[u8]) -> MacResult {
-	let mut hmac = Hmac::new(Sha256::new(), &key[..]);
-	hmac.input(data);
-	hmac.result()
-}
-
-
-fn kdf(kdf_key: &KdfKey, secret: &Secret) -> EncryptionKey {
-	EncryptionKey {
-		key: ChaCha20Key::from_slice(hmac(&kdf_key.key_key, &secret[..]).code()).expect("internal error"),
-		nonce: ChaCha20Nonce::from_slice(&hmac(&kdf_key.nonce_key, &secret[..]).code()[0..8]).expect("internal error"),
-	}
-}
-
-
-fn encrypt(key: &EncryptionKey, data: &[u8]) -> Vec<u8> {
-	let mut encryptor = ChaCha20::new(&key.key[..], &key.nonce[..]);
-	let mut output = vec!(0u8; data.len());
-	encryptor.process(data, &mut output);
-	output
-}
 
 
 #[cfg(test)]
 mod test {
-	use super::{HmacKey, KdfKey, Secret, ChaCha20Key, ChaCha20Nonce, EncryptionKey, KeyStore, EncryptedArchiveName, EncryptedArchive, BlockId, EncryptedBlock, hmac, kdf, encrypt};
-	use crypto::mac::MacResult;
-	use std::io::Cursor;
-	use crypto::curve25519::{curve25519_base};
-	use std::str::FromStr;
+	use super::{HmacKey, SivEncryptionKeys, KeyStore, SIV};
+	use crypto::pbkdf2::pbkdf2;
+	use crypto::hmac::Hmac;
+	use crypto::sha2::Sha512;
 	use data_encoding::HEXLOWER_PERMISSIVE;
+	use rand::rngs::OsRng;
+	use rand::Rng;
 
+	// TODO: As a sanity check, we should perform some statistical tests on the outputs from all the encryption functions.
+	// If they are implemented correctly, all output should look indistiguishable from random.
 
-	#[test]
-	fn test_hmac() {
-		// Test vector generated manually using Python
-		let key = HmacKey::from_slice(&HEXLOWER_PERMISSIVE.decode(b"ffb5dcc86e1eb427a405d9a038e8db18f6e1ff0f335288143f77f708e2c7f524fca279a5242e616b45c28913356575768d0077d51ab8550f5264a0368def5f0a").unwrap()).unwrap();
-		let data = HEXLOWER_PERMISSIVE.decode(b"896af71f4f51c8a6dc32357d407a01d15fdc5fd05b2c73d9c4c5e5bd14cae7c58661fcfe39da38ac0a956befec7fc3fe437f5243acbfe8d0412cbe7fa3c1547ff91764cb5be8ade347386bfd630a5fae08c139cd2fc58fb11542e56d94817f44bc79b40ba4fef1c8ee7709c77ab2399d8419fe8017439da3").unwrap();
-		let expected = HEXLOWER_PERMISSIVE.decode(b"9d4e17e1d5842c289a78c03da7218e85683c5842d6f4367dd2fab79da1d0464b").unwrap();
-
-		assert!(hmac(&key, &data) == MacResult::new(&expected));
+	fn from_hexstr(hexstr: &str) -> Vec<u8> {
+		HEXLOWER_PERMISSIVE.decode(hexstr.as_bytes()).unwrap()
 	}
 
 	#[test]
-	fn test_kdf() {
-		// Test vector generated manually using Python
-		let kdf_key = KdfKey {
-			key_key: HmacKey::from_slice(&HEXLOWER_PERMISSIVE.decode(b"32fb9afd920064555d403ffd11bb4f37870c67bc30595cac6613bc9e8e46b50335b8bedc478757b8d148d064475e8124083b1c311e29411d491e087680844f01").unwrap()).unwrap(),
-			nonce_key: HmacKey::from_slice(&HEXLOWER_PERMISSIVE.decode(b"9fa40dbab494f0c154eef8f0dadf5e4df527d2972cacfd800002b6f8db7975942a2e6f35d7f394fcfe6ce3744bdb6f1f423a65fa7b6aab70e4f66e274e24261e").unwrap()).unwrap(),
+	fn test_pbkdf2_extendable() {
+		// Tests to make sure that PBKDF2 generates extendable output (i.e. we can add keys to the KeyStore later by increasing the length passed to PBKDF2)
+		let mut rng = OsRng::new().expect("OsRng failed to initialize");
+		let key = HmacKey::from_rng(&mut rng);
+
+		let out1 = {
+			let mut output = vec![0u8; 100];
+			let mut hmac = Hmac::new(Sha512::new(), &key[..]);
+			pbkdf2(&mut hmac, &[], 1, &mut output);
+			output
 		};
-		let secret: Secret = serde_json::from_str("\"d0dbfab271e591ef9745e33b4a18edcac29513afd79cbba4fc8581037985128c\"").unwrap();
-		let expected_key = ChaCha20Key::from_slice(&HEXLOWER_PERMISSIVE.decode(b"8ec2bd8afb3c8fea1b7aa09f813c3df2488fd79c635111e2b7c490217759bef6").unwrap()).unwrap();
-		let expected_nonce = ChaCha20Nonce::from_slice(&HEXLOWER_PERMISSIVE.decode(b"7f73a2dae4d687a0").unwrap()).unwrap();
-		let output = kdf(&kdf_key, &secret);
 
-		assert_eq!(output.key, expected_key);
-		assert_eq!(output.nonce, expected_nonce);
-	}
-
-	#[test]
-	fn test_encrypt() {
-		// https://github.com/secworks/chacha_testvectors/blob/master/src/chacha_testvectors.txt
-		// with random data XOR'd in Python
-		let encryption_key = EncryptionKey {
-			key: ChaCha20Key::from_slice(&HEXLOWER_PERMISSIVE.decode(b"00112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100").unwrap()).unwrap(),
-			nonce: ChaCha20Nonce::from_slice(&HEXLOWER_PERMISSIVE.decode(b"0f1e2d3c4b5a6978").unwrap()).unwrap(),
+		let out2 = {
+			let mut output = vec![0u8; 200];
+			let mut hmac = Hmac::new(Sha512::new(), &key[..]);
+			pbkdf2(&mut hmac, &[], 1, &mut output);
+			output.truncate(100);
+			output
 		};
-		let data = HEXLOWER_PERMISSIVE.decode(b"aa8ba6688d21ace02dd33078a3b4bf36512ec1c5516dfee2465a4d81d84efec106f5acab2b9c3d14e19a23bd9d8935a720639bdea7f4e9ac2de69efbc17e95185f2b2fd12039").unwrap();
-		let expected = HEXLOWER_PERMISSIVE.decode(b"352652614d29bd3029e2e606586c308c080f4c9836654f34c3dc722a634068dfecbda37dd0cf16e9a8d102ec9cd962e51ad591bd59bbbc5b8ff47cedbdb42c29a4d6061e5bf8").unwrap();
-		let output = encrypt(&encryption_key, &data);
 
-		assert_eq!(output, expected);
-	}
-
-	// Test vector generated manually using Python
-	const TEST_KEYSTORE_JSON: &'static str = r#"
-		{
-			"block_secret_key": "19646cf14953bf0544aa84ac117c1442b4eb5c4a1fb4c519e5ed97ffcd3fd77d8f6e3cecde0a97dab2ef2d7f67d4a817c9211e2b19d7cc1fa4dc8956c646cccd",
-			"block_id_key": "11807f49e4d6acca44fec46f03e760b2ccd72d65f4710253aa58b92bc0ce70199150ae543f42b207a6f67c0cf6964696b03a6fa7a66b9298613fd5f102d5cf3f",
-			"block_kdf_key": {
-				"key_key": "a109c333262f7c12d86b54c35ee402490935572fa91f1828e60137cfa56bd17d04e9313761756e0830068a6da8703e320ccf658454445015b9da36eecd7d0489",
-				"nonce_key": "6aeab81744ed1ca990f243de73a0ceb612f150bbf7c2f95af0af9e772977dd69d22b102ac410bc41779ea142ea600ac57a699fef35b34174ccd89c9258a9419b"
-			},
-			"block_hmac_key": "bf5d949530d910df07ae5aeaf97aa48707ff27d4d6644fb1161681de7f4f1306892f51590199b828eb2084950e5c6a2a8abe31f04b22a2ee186e1f5eb3c279b7",
-			"archive_private_key": "358eb84aedd2dd94ccc12b1b4efcfde379d1a1719bc03a5a44bcb274fe8bf7cb",
-			"archive_public_key": "0c8af598cebbab133498a758d94dd3c03945834e49359d94062f99698c34e33b",
-			"archive_kdf_key": {
-				"key_key": "8e96ed3cc276b260893c0941592c8071e97c3acc8f87a6c08840f7524c66932fbabde1bbe9f10d64bab45dd48ae4716e80f1bbead7cb502d18fca6db7d236c1b",
-				"nonce_key": "5541c218ffca385e3559f824aaef8b700195e46df058af5f4c7ab4eef37abc2409c5a3ef536c24471385da37cf021da844890767c6b867b52d4a25b9e0c39289"
-			},
-			"archive_hmac_key": "10ff050b0eab62cb69dde7dd1045994ce7b4679ca819f6c0814c7f602cd0d4a2c15e9129712847e8049a2b53fc30b4087592639311368e4b501c704a713d13b8",
-			"archive_name_id_key": "437043d276de689e19a58ddb7a9b5639f7b06211182cb050784e0cfa2973cd55ce4f485491162e53343171ea470e1e780f4e4fb138eed74e31a9fed54c37aa68",
-			"archive_name_kdf_key": {
-				"key_key": "6951a923fcde6e49cd01e7e990ee4be7578f2615045484634950c460229dcace0825bb90d851009149e7bef7ac18f3db4a5fe521453372247f9426b5794ba4a1",
-				"nonce_key": "a835124a69ea9f7e1ad5cfacf600042d8454d54190df0a807c9dda342e5298b83e7c912e589e0f9a1ab7d4bebcbc8d36500e36868b815388e8a2411c97f7e974"
-			},
-			"archive_name_hmac_key": "0159488598262caaf32fb9c78cc92146a6bb84b0140a7ea32e449a9c4041d101d4b47461ec3fa209712499b07e6098ee2e00a2823d4158d347a04d3f56b37302"
-		}
-	"#;
-
-	/// Test if the public key from the test vector is correct
-	#[test]
-	fn test_keystore_public_key() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let output_public_key = curve25519_base(&keystore.archive_private_key[..]);
-
-		assert_eq!(output_public_key, keystore.archive_public_key[..]);
+		assert_eq!(out1, out2);
 	}
 
 	#[test]
-	fn test_keystore_save_load() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let mut buffer = vec![0u8; 0];
+	fn test_encryption() {
+		// Exercises the encryption system
+		let mut rng = OsRng::new().expect("OsRng failed to initialize");
+
+		let keys = SivEncryptionKeys {
+			siv_key: HmacKey::from_rng(&mut rng),
+			cipher_key: HmacKey::from_rng(&mut rng),
+		};
+
+		let other_keys = SivEncryptionKeys {
+			siv_key: HmacKey::from_rng(&mut rng),
+			cipher_key: HmacKey::from_rng(&mut rng),
+		};
+
+		let mut plaintext = vec![0u8; rng.gen_range(16, 1024)];
+		let mut aad = vec![0u8; rng.gen_range(0, 1024)];
+		rng.fill(&mut plaintext[..]);
+		rng.fill(&mut aad[..]);
+
+		// The same aad and plaintext should result in the same siv and ciphertext
+		let (siv1, ciphertext1) = keys.encrypt(&aad, &plaintext);
+		let (siv2, ciphertext2) = keys.encrypt(&aad, &plaintext);
+		assert_eq!(siv1, siv2);
+		assert_eq!(ciphertext1, ciphertext2);
+
+		// But not if the key changes
+		assert_ne!((siv1.clone(), ciphertext1.clone()), other_keys.encrypt(&aad, &plaintext));
+
+		// Changing aad or plaintext should change siv and ciphertext
+		let (siv3, ciphertext3) = keys.encrypt(b"different", &plaintext);
+		let (siv4, ciphertext4) = keys.encrypt(&aad, b"different");
+		assert_ne!(siv1, siv3);
+		assert_ne!(ciphertext1, ciphertext3);
+		assert_ne!(siv1, siv4);
+		assert_ne!(ciphertext1, ciphertext4);
+		assert_ne!(siv3, siv4);
+
+		// Ciphertext should be completely different even if only one byte of plaintext is different.
+		let (siv5, ciphertext5) = keys.encrypt(&aad, &plaintext[..plaintext.len() - 1]);
+		assert_ne!(siv1, siv5);
+		assert_ne!(&ciphertext1[..plaintext.len() - 1], &ciphertext5[..]);
+
+		// Length preserving
+		assert_eq!(plaintext.len(), ciphertext1.len());
+
+		// Can be decrypted
+		assert_eq!(keys.decrypt(&aad, &siv1, &ciphertext1).unwrap(), plaintext);
+
+		// Using the wrong key, siv, aad, or ciphertext should cause decryption errors
+		assert!(keys.decrypt(&aad, &siv3, &ciphertext1).is_none());
+		assert!(keys.decrypt(&aad, &siv1, &ciphertext3).is_none());
+		assert!(keys.decrypt(b"different", &siv1, &ciphertext1).is_none());
+		assert!(keys.decrypt(&aad, &siv1, &ciphertext1[..ciphertext1.len()-1]).is_none());
+		assert!(other_keys.decrypt(&aad, &siv1, &ciphertext1).is_none());
+	}
+
+	#[test]
+	fn test_known_encryption_vectors() {
+		let test_keys = SivEncryptionKeys {
+			siv_key: HmacKey::from_slice(&from_hexstr("2ceaccb6b306992f6affd27049b62d823a90f8125a808d292e27f5f82bf7629b8f9ada4a8135ed99cf5d5aef0ca6a69fe54104a8246e7e5a6bb210d0c945559834d3d12b40bd61cf75a462aad1a0d71d0d963957fb8270e83902f48bfd7b8e8f0603c503238c3b24c8f4ab645c521732f31bd0b3d455448f33d56102476ee5c3")).unwrap(),
+			cipher_key: HmacKey::from_slice(&from_hexstr("8d45ccdc385e71c9ab0619d212fcc5118fb44c7d8b37d5dc0db4214b9787905913bdd73e3afe1db5fbea82263d3171c17d2acdf88517e6d78cdb5339f10f50ef68a55950aca578c7a170476da81a705abdf031e74bf6fbf65180e51ee14983c7d100f377cea3a27caca46fd2e2bb2cca48afd5f49cf18fbe43d580e0465b308a")).unwrap(),
+		};
+		let test_aad = b"aad";
+		let test_plaintext = b"plaintext";
+		let test_siv = SIV::from_slice(&from_hexstr("805165cad67979f70e16de978a34693972856db82c390b5bc824fc197a68d5d5")).unwrap();
+		let test_ciphertext = from_hexstr("c7a4a22690419ee831");
+
+		let (siv, ciphertext) = test_keys.encrypt(test_aad, test_plaintext);
+		assert_eq!(siv, test_siv);
+		assert_eq!(ciphertext, test_ciphertext);
+
+		// This test vector was generated using an indepedent Python implementation
+		let test_keys = SivEncryptionKeys {
+			siv_key: HmacKey::from_slice(&from_hexstr("bf2bb483cb12aa8fb38370c3f1debfbe6f357ab0b4f0468107e95fa744f8f8419ad3a24dc2789e815ddd4a91852c96b79c6a79da6fd0b90a80359f1f91630a66389788d704e011870c04211527c7175f8dfa560779113ebe2f2486bde5d1cef883d9ad5b80f2e0530782c2d287107023f7b5834f98a370bb3310b39d58376d28")).unwrap(),
+			cipher_key: HmacKey::from_slice(&from_hexstr("0b4d46a0f976497075238d681c7738c128eaeed7394eb700af0a00f7a452193cad43d2fa99360da728f42d1ddd45a4bc8c14ffe0eb4a40e33bf9180c5bb1201ef25615b55dd8b109f6a9f019157460aeae57bc2dd1ab6b0676386cbfd30d60ce96413dee81a339fc7d537f9a5c21bcf9836e9e40c68edaaf6a0fb18a0f7a1338")).unwrap(),
+		};
+		let test_aad = b"archive id";
+		let test_plaintext = b"deterministic authenticated encryption";
+		let test_siv = SIV::from_slice(&from_hexstr("1f5453bee0dee9b19cecc680249d3410d275801109f8780204d698fba56fb33c")).unwrap();
+		let test_ciphertext = from_hexstr("5f0271a16eb3f842cd268078a34bca95b7b35a57b260edb6870a058c37461efb373a02d419e8");
+
+		let (siv, ciphertext) = test_keys.encrypt(test_aad, test_plaintext);
+		assert_eq!(siv, test_siv);
+		assert_eq!(ciphertext, test_ciphertext);
+	}
+
+	#[test]
+	fn test_keystore() {
+		// Test vector generated manually using Python: hexlify(hashlib.pbkdf2_hmac('sha512', master_key, b'', 1, dklen=256*4))
+		let master_key = HmacKey::from_slice(&from_hexstr("46efca626234765806a7079a8f51f6d172fd2912106eee2f6a826c8869286684eb27d026c5368827424be8ae915987f820af7ac9a3e670cfd16b3e8e611cb1a9cea329489f2049472b4bd924872526d012336356aa949833a279c469720e617f2e9096803a27b674e71265c417eff499b40d86da9aceb17be46d8f470d2a11db")).unwrap();
+		let keystore = KeyStore::from_master_key(master_key.clone());
+
+		let keystore_data = [
+			&keystore.block_keys.siv_key[..], &keystore.block_keys.cipher_key[..],
+			&keystore.archive_name_keys.siv_key[..], &keystore.archive_name_keys.cipher_key[..],
+			&keystore.blocklist_keys.siv_key[..], &keystore.blocklist_keys.cipher_key[..],
+			&keystore.metadata_keys.siv_key[..], &keystore.metadata_keys.cipher_key[..],
+		].concat();
+
+		assert_eq!(keystore_data, from_hexstr("054c9173d52fb8b6fd4bd001230f934ba922ee2a72931a1bf3b82e2852b5ba3ac39fdd5c49173dc345fc42d551025aa41a537dbb9ccfbcd1ac596bdb47f8e61a1e98fe4767984ddc43622e5f3c4ffd6219328bea11ec9b59b913297f8f23991fce948448202fe46923cfd5e08abe293c0f4b3080d588e84c53197b3ba8a129e77bb1a0d5edddb15563c2d41d3e90e8a5857242f17364a70e7bbf73ca717b0930288e966dc3b84dee3e4beeb89fedd92bbbc03c7a26a822eca2fe0dda425adea887bef8f968c2584e8e234583db00eed0f768db9b56bbf1def531a67e3f22f0658024a508d5bae8a04b40163ca4e5ced838987f95d9bd9f4bae2f36d77b3f4e9d254f98b6286e3a1ee1324fb996aeeec95ba4dd4aa658a93bea87ec2ba766cab922322ddb529c03db2fb6ac19d515f11331faaff3c4d26888e98bc84e165dabe842528372a60f4c3ea46bbdc47a255d21728d066d3965bb618407b57aa3f155500a0eccf2e632b0af30d54012464fcde6fe96e5e4f1931ff28bd55bf29a0c5bc21ab566b7a05d9282f9fcc91d49465404384b0512dc03ae6cd7044e366b4e4dec4e9ed869382cb3cc6db2700b9c5c0965e3847b3b045b8cfb2e0209318bd4ba29d97afbfdd738c93cf78477e0d274bae95f64187dd4f9752b959ae7dacadc7eb257661d125d1cc4a08d0243d105c7f7e2f87d63340da0ff106b759b52bc608b99a57df18e143f78d85f1e1b7340d49fee84920ee1275b85a00dce55bbed81d0db883c710ee5a9d232ae8bd1793ed33223f5b3aba8610d005b11c9d1fd6aa0148f67468d4f51c2c889fb26d66c9cbd57072bfbfa5649f759e1d13ee5397babb50674598dd51ad9e29f2684c57ec6642efb11ea67a8cc48617d696203c300bb3fae17ac4036208b7876f1e59da4126229a52103cd1995a95da4ab96d4e68ab6d62e1f15d65a71c9f54a605d03be5902ebbef49c68c190ad5948d0fbfedae17e376613ee28ada120a346c5dd70e8f762bb48cddaa006a93b041b71b1bd5e6b9c6b24558047e719a11d6293a876a149c9667642c9f311c1a4779432af7d7f39f90998dd3f3c87e73dc976cc06d825c58168711825729e91c4608b492482585085d1c9d8669fc1dd4157297d290c560ebd136aadc18c6e5f48df8b125b235586dc36fa9330fc773ae00e33fa6491cf71bc0e323c1f578e40a399b3e9a3d48b6bcb0cb098e8e8783496991d5d887be527fcdfa56fe3c27ff2c0eadaaeb5706eee881b633618dfc8468d0d9a5f131ff3a976b2cbb817978eb62caf07cf6edaa879aea79fcb9f451ab06fb2b4f40c51375d27a2dff25c3ea4afab2e2ed7b03f3c64a223e2d3deec7023ee43300b9648b12732004dc34b5b21ba087b21efcb7e0c4af8a4fb5c2a3f47a9c7e40e461d63d4d4961bc576fa35cc3a4f09a19b109bbbcaf07468"));
+
+		// Test serialization
+		let mut buffer = Vec::new();
 
 		keystore.save(&mut buffer).unwrap();
-		let output = KeyStore::load(&mut Cursor::new(buffer)).unwrap();
+		let restored_keystore = KeyStore::load(&buffer[..]).unwrap();
 
-		assert_eq!(output, keystore);
+		assert!(restored_keystore == keystore);
+		assert_eq!(restored_keystore.master_key, master_key);
 	}
 
 	#[test]
-	fn test_encrypt_archive_name() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let name = "(╯°□°）╯︵ ┻━┻";
-		let expected = "YuDnnmapCAOdv9RfpB77aVAln9NWgK9maOkpO4omqQvc9Dnng26-IH_qziHcxAMofqG1uGfMt2_Z4LkQdO_zXcmRn_6NY0FS3U_uSAGmudueq_r5H37QDYXQJIcV_A==";
-		let output = keystore.encrypt_archive_name(name).unwrap().to_string();
+	fn test_encrypt_objects() {
+		// Tests the higher level APIs (encrypt block, encrypt archive, etc)
+		// Mostly just sanity checks, since other tests verify that the underlying encryption functions are correct.
+		let keystore = KeyStore::new();
+		let test_data = "just data";
 
-		assert_eq!(output, expected);
+		let (block_id, mut block_ciphertext) = keystore.encrypt_block(test_data.as_bytes());
+		let (archive_id, name_ciphertext) = keystore.encrypt_archive_name(test_data);
+		let metadata_ciphertext = keystore.encrypt_archive_metadata(&archive_id, test_data.as_bytes());
+
+		// Sanity checks
+		assert_eq!(test_data.as_bytes(), &keystore.decrypt_block(&block_id, &block_ciphertext).unwrap()[..]);
+		assert_eq!(test_data, keystore.decrypt_archive_name(&archive_id, &name_ciphertext).unwrap());
+		assert_eq!(test_data.as_bytes(), &keystore.decrypt_archive_metadata(&archive_id, &metadata_ciphertext).unwrap()[..]);
+
+		// Even when the data is the same, every type of object should get different IDs because different keys are used
+		assert_ne!(&block_id[..], &archive_id[..]);
+		assert_ne!(block_ciphertext.0, name_ciphertext.0);
+
+		// Sanity check
+		block_ciphertext.0[0] ^= 0xbe;
+		assert!(keystore.decrypt_block(&block_id, &block_ciphertext).is_err());
+
+		// Make sure encrypting unicode names works
+		let unicode_name = "(╯°□°）╯︵ ┻━┻";
+		let (archive_id, name_ciphertext) = keystore.encrypt_archive_name(unicode_name);
+		assert_eq!(unicode_name, keystore.decrypt_archive_name(&archive_id, &name_ciphertext).unwrap());
 	}
 
 	#[test]
-	fn test_decrypt_archive_name() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let name = "YuDnnmapCAOdv9RfpB77aVAln9NWgK9maOkpO4omqQvc9Dnng26-IH_qziHcxAMofqG1uGfMt2_Z4LkQdO_zXcmRn_6NY0FS3U_uSAGmudueq_r5H37QDYXQJIcV_A==";
-		let expected = "(╯°□°）╯︵ ┻━┻";
-		let output = keystore.decrypt_archive_name(&EncryptedArchiveName::from_str(name).unwrap()).unwrap();
+	fn test_encode() {
+		// Tests to make sure the underlying Encode function is working correctly
+		let keystore = KeyStore::new();
 
-		assert_eq!(output, expected);
-	}
+		let test1_a = b"a";
+		let test1_b = b"ab";
 
-	#[test]
-	fn encrypt_archive() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let encrypted_name = EncryptedArchiveName(HEXLOWER_PERMISSIVE.decode(b"13230a254e27bac67067a5c3ead9539141ffe689cd606ce9f3baec4b3384743d59934754363eb00ffdb3d128b6b691004e6df66f17ad90dba6ff939417a920b08827b93a8ab7").unwrap());
-		let archive = HEXLOWER_PERMISSIVE.decode(b"1c50fc6cff9174cdef6ae1949783cec449514818eb27ce9c1d0a475c23fb2a2de6741a9fb0462516d1ee69e1b1f70d6e4aecf03d0ae7260d3728e5cbfde6e73cbd9178a4d1164d2469dcf72aa84b4aac9c442c2018a4b6ef211cf49215f7a85fd27f13ae620347f2bd608b7550275cb9c51bbe52db156d8d75b27f9c16629f7fe6171aac7389c4f0dedc69c32b761fcb5974bdfd7661a98dae81c2becfde29fbb23d7a72ba5338ad6fd5fb56e1e3ee8dc0ed70bc054df683773c0001b2e51922ded5cf3908fb3769").unwrap();
+		let test2_a = b"aa";
+		let test2_b = b"b";
 
-		let encrypted = keystore.encrypt_archive(&encrypted_name, &archive);
-		let decrypted = keystore.decrypt_archive(&encrypted_name, &encrypted).unwrap();
-
-		assert_eq!(decrypted, archive);
-	}
-
-	#[test]
-	fn decrypt_archive() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let encrypted_name = EncryptedArchiveName(HEXLOWER_PERMISSIVE.decode(b"13230a254e27bac67067a5c3ead9539141ffe689cd606ce9f3baec4b3384743d59934754363eb00ffdb3d128b6b691004e6df66f17ad90dba6ff939417a920b08827b93a8ab7").unwrap());
-		let encrypted = EncryptedArchive(HEXLOWER_PERMISSIVE.decode(b"29c12a136d3b0a86a580476bf683e2dccc11983aa1804972e122e3aada7553329057064501290bc01157c515b0b6ab33cf16cd5526b01c4ce7a286e9b9aad32ab731719013709008d6e657975cab0db16050aeaf651f2400541a3f6ffdf868e2112191a421e86799cda25e47edf90eb43d257dc1d0f0a3548446e8b4b3d753566cf997591118dfb5839fc26718a2bc8677b59a00060eb5de66392d0c352ec233d53548f6be012a202ba1074fc95b2f1e4430eb18dc9cc52f817b652f88ec65465121501e790daa174cb1b982aaa4c0933ae7daccafa7b9571109d2869256eee2b8404d43bc774a5b42b8e9939445d30560a4c0840786ebb5565c7a70663adc0bbbca3e6e1618ae14").unwrap());
-		let expected = HEXLOWER_PERMISSIVE.decode(b"1c50fc6cff9174cdef6ae1949783cec449514818eb27ce9c1d0a475c23fb2a2de6741a9fb0462516d1ee69e1b1f70d6e4aecf03d0ae7260d3728e5cbfde6e73cbd9178a4d1164d2469dcf72aa84b4aac9c442c2018a4b6ef211cf49215f7a85fd27f13ae620347f2bd608b7550275cb9c51bbe52db156d8d75b27f9c16629f7fe6171aac7389c4f0dedc69c32b761fcb5974bdfd7661a98dae81c2becfde29fbb23d7a72ba5338ad6fd5fb56e1e3ee8dc0ed70bc054df683773c0001b2e51922ded5cf3908fb3769").unwrap();
-		let output = keystore.decrypt_archive(&encrypted_name, &encrypted).unwrap();
-
-		assert_eq!(output, expected);
-	}
-
-	#[test]
-	fn block_id_from_block_secret() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let secret = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"2777f099df579d92a133c63b070e90336a603ed53dce96d6856365f8618e9597").unwrap()).unwrap();
-		let expected = "7b768a13e4fde76930e38c6eb7f83d320bddc5eecf8b5fe970543b7feea195dc";
-		let output = keystore.block_id_from_block_secret(&secret);
-
-		assert_eq!(output.to_string(), expected);
-	}
-
-	#[test]
-	fn block_secret_from_block() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let block = HEXLOWER_PERMISSIVE.decode(b"a928fbcbcbe0fed28f942f97d0890efafb29134d8a32798f0919e9930c4481b4228114e37316caab4844b54f2ae7b053f85fa36732bc2f8d64c240227a80d0a0d6f1aefc7c94cfc77657a2af1fb67f65e3c1e50dfb255552f11187465e0cc2acb81f250a6577d50d828790b3f855395f28c0d9c23358d40a1fb84c8383226f740de67ebf24b975c6972760895b46cc866aec410e7999a04232009c442a4d609c9df38f95de773c5b981344d3007e27b2b1eca1a42580a50a08f6d550892e4b60a18223d0fc049fcd").unwrap();
-		let expected = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"242d98aa50d8048bb1e4eed232cc7c0e23d7fdd8db2e01e7b25794acf0d850e7").unwrap()).unwrap();
-		let output = keystore.block_secret_from_block(&block);
-
-		assert_eq!(output, expected);
-	}
-
-	#[test]
-	fn encrypt_block() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let block = HEXLOWER_PERMISSIVE.decode(b"cc544b2050e96c38880414a54fcd22a7732438acc08b9541ef00621fae3fc4311ccacef1da7036eb69116a297eca3f256a62e9f9c41d82794d975a7d7c9473df1887cd409c59fc3a564d8861a1fbe46e3b4393269ff0c60406688a3ce27314c4dcc73e4e69521fe357235240f70fa80b16b8fcc8376340a64ddeb4c486b0a4363d0d90b35db9811ca243a59f3582d8fcbf2fa95affdc8f8848ac0cbc43f4cb0d6a6240c6835e44014a4b178969ad76c8c7fb953450d4896eb541fa5bbd20cb3cfcc681db7b46dd1d").unwrap();
-		let expected_secret = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"ed10dd0d10371ceaaa1fb0c7aafe4c263ae63d3d1218649dffa579b7e13a6cc3").unwrap()).unwrap();
-		let expected_id = BlockId::from_slice(&HEXLOWER_PERMISSIVE.decode(b"8aa4569826e5c06fec4fd9bf30f9dba6a71678ed6c57761cc1cc0173ce993eab").unwrap()).unwrap();
-		let expected_block = EncryptedBlock(HEXLOWER_PERMISSIVE.decode(b"5f61b5865df068f40a6092429b90c3849e0bc86f0048a515417397782e6b14a1d8e06a5408c0f7884b4c33850047c0ce4a1e648e51b6357fc6fb3fad19877ac169e1da21dd9af4b7f74f4db86f993b4c7ac8454cee6274a54c38751bfd908e72b5663c1aaea63956f66017711850e7467cb485adce83943c4d0525133567c7082d25eb739fc317037b91a691177dc5536e8b5d73d1b0345f5d587abf87bc228ffb0480c70ab9abd3f89006bc788968e542f24f5f6b48ac8b80ff7e9045f061389b2b56a6a165fe245e1765decc85c1f24c2dcf493685dc071f0cdabac909680fcfd9d67001bf2b77").unwrap().to_vec());
-
-		let secret = keystore.block_secret_from_block(&block);
-		let id = keystore.block_id_from_block_secret(&secret);
-		let encrypted = keystore.encrypt_block(&id, &secret, &block);
-
-		assert_eq!(secret, expected_secret);
-		assert_eq!(id, expected_id);
-		assert_eq!(encrypted, expected_block);
-	}
-
-	#[test]
-	fn test_verify_encrypted_block() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let id = BlockId::from_slice(&HEXLOWER_PERMISSIVE.decode(b"a174d2732f230ad12f43d82af279a49636236d26321be908116e386e7ea1f737").unwrap()).unwrap();
-		let encrypted_block = EncryptedBlock(HEXLOWER_PERMISSIVE.decode(b"f96e286e89cfda5548d4a82d63b91db6c1d5731176b15a6205d6dc274b322e261fe4eb8dc91418438d730839a4d097e768d5bd9b3f300180158fbd77428782ac87a3e5338561974ba0434c38c660dc3d0d0e7bf7358c3372d313f3a1be5bdf46f08f60840bc264caed3a17064a3c21a8b1150f87361f4e389f4e187c86cd069f032a2f15").unwrap().to_vec());
-
-		assert!(keystore.verify_encrypted_block(&id, &encrypted_block));
-	}
-
-	#[test]
-	fn test_decrypt_block() {
-		let keystore: KeyStore = KeyStore::load(TEST_KEYSTORE_JSON.as_bytes()).unwrap();
-		let secret = Secret::from_slice(&HEXLOWER_PERMISSIVE.decode(b"ed10dd0d10371ceaaa1fb0c7aafe4c263ae63d3d1218649dffa579b7e13a6cc3").unwrap()).unwrap();
-		let encrypted_block = EncryptedBlock(HEXLOWER_PERMISSIVE.decode(b"5f61b5865df068f40a6092429b90c3849e0bc86f0048a515417397782e6b14a1d8e06a5408c0f7884b4c33850047c0ce4a1e648e51b6357fc6fb3fad19877ac169e1da21dd9af4b7f74f4db86f993b4c7ac8454cee6274a54c38751bfd908e72b5663c1aaea63956f66017711850e7467cb485adce83943c4d0525133567c7082d25eb739fc317037b91a691177dc5536e8b5d73d1b0345f5d587abf87bc228ffb0480c70ab9abd3f89006bc788968e542f24f5f6b48ac8b80ff7e9045f061389b2b56a6a165fe245e1765decc85c1f24c2dcf493685dc071f0cdabac909680fcfd9d67001bf2b77").unwrap().to_vec());
-		let expected = HEXLOWER_PERMISSIVE.decode(b"cc544b2050e96c38880414a54fcd22a7732438acc08b9541ef00621fae3fc4311ccacef1da7036eb69116a297eca3f256a62e9f9c41d82794d975a7d7c9473df1887cd409c59fc3a564d8861a1fbe46e3b4393269ff0c60406688a3ce27314c4dcc73e4e69521fe357235240f70fa80b16b8fcc8376340a64ddeb4c486b0a4363d0d90b35db9811ca243a59f3582d8fcbf2fa95affdc8f8848ac0cbc43f4cb0d6a6240c6835e44014a4b178969ad76c8c7fb953450d4896eb541fa5bbd20cb3cfcc681db7b46dd1d").unwrap();
-
-		let id = keystore.block_id_from_block_secret(&secret);
-		let output = keystore.decrypt_block(&secret, &id, &encrypted_block).unwrap();
-
-		assert_eq!(output, expected);
+		assert_ne!(keystore.block_keys.encrypt(test1_a, test1_b).0, keystore.block_keys.encrypt(test2_a, test2_b).0);
 	}
 }

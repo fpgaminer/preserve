@@ -43,14 +43,19 @@ macro_rules! newtype_from_slice (($newtype:ident, $len:expr) => (
 		}
 		n
 	}
+
+    /// Performs a constant time comparison
+    pub fn constant_eq(&self, &$newtype(ref other): &$newtype) -> bool {
+        use crypto::util::fixed_time_eq;
+        let &$newtype(ref this) = self;
+        fixed_time_eq(this, other)
+    }
 ));
 
 macro_rules! newtype_traits (($newtype:ident, $len:expr) => (
     impl ::std::cmp::PartialEq for $newtype {
-        fn eq(&self, &$newtype(ref other): &$newtype) -> bool {
-			use crypto::util::fixed_time_eq;
-            let &$newtype(ref this) = self;
-			fixed_time_eq(this, other)
+        fn eq(&self, other: &$newtype) -> bool {
+            self.constant_eq(other)
         }
     }
 

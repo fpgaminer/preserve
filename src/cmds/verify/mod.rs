@@ -1,4 +1,4 @@
-use crate::keystore::{KeyStore, Secret};
+use crate::keystore::{KeyStore, BlockId};
 use std::collections::HashSet;
 use crate::backend::{self, Backend};
 use crate::archive::{Archive, File};
@@ -28,21 +28,15 @@ pub fn execute(args: &ArgMatches) {
 		}
 	};
 
-	let encrypted_archive_name = match keystore.encrypt_archive_name(&backup_name) {
-		Ok(name) => name,
-		Err(err) => {
-			error!("{}", err);
-			return;
-		}
-	};
-	let encrypted_archive = match backend.fetch_archive(&encrypted_archive_name) {
+	let (archive_id, _) = keystore.encrypt_archive_name(&backup_name);
+	let encrypted_archive = match backend.fetch_archive(&archive_id) {
 		Ok(archive) => archive,
 		Err(err) => {
 			error!("{}", err);
 			return;
 		}
 	};
-	let archive = match Archive::decrypt(&encrypted_archive_name, &encrypted_archive, &keystore) {
+	let archive = match Archive::decrypt(&archive_id, &encrypted_archive, &keystore) {
 		Ok(archive) => archive,
 		Err(err) => {
 			error!("{}", err);
@@ -58,7 +52,7 @@ pub fn execute(args: &ArgMatches) {
 	let mut block_list = HashSet::new();
 
 	build_block_list(&archive.files, &mut block_list);
-	let mut block_list: Vec<Secret> = block_list.into_iter().collect();
+	let mut block_list: Vec<BlockId> = block_list.into_iter().collect();
 	// We shuffle so that if verification is terminated it can be run again (multiple times) and
 	// probablistically cover all blocks.
 	block_list.shuffle(&mut rand::thread_rng());
@@ -67,21 +61,19 @@ pub fn execute(args: &ArgMatches) {
 }
 
 
-fn build_block_list(files: &[File], block_list: &mut HashSet<Secret>) {
+fn build_block_list(files: &[File], block_list: &mut HashSet<BlockId>) {
 	for file in files {
-		for secret in &file.blocks {
-			block_list.insert(secret.clone());
+		for block_id in &file.blocks {
+			block_list.insert(block_id.clone());
 		}
 	}
 }
 
 
-fn verify_blocks(block_list: &[Secret], keystore: &KeyStore, backend: &mut Backend) {
+fn verify_blocks(block_list: &[BlockId], keystore: &KeyStore, backend: &mut Backend) {
 	let mut corrupted_blocks = Vec::new();
 
-	for (idx, secret) in block_list.iter().enumerate() {
-		let block_id = keystore.block_id_from_block_secret(&secret);
-
+	for (idx, block_id) in block_list.iter().enumerate() {
 		// TODO: Differentiate between a missing block and an error.  Missing blocks would be critical errors.
 		let encrypted_block = match backend.fetch_block(&block_id) {
 			Ok(block) => block,
@@ -91,7 +83,7 @@ fn verify_blocks(block_list: &[Secret], keystore: &KeyStore, backend: &mut Backe
 			}
 		};
 
-		if !keystore.verify_encrypted_block(&block_id, &encrypted_block) {
+		if keystore.decrypt_block(&block_id, &encrypted_block).is_err() {
 			error!("CRITICAL ERROR: Block {} is corrupt.  You should save a copy of the corrupted block, delete it, and then rearchive the files that created this archive.  That should recreate the block.", block_id.to_string());
 			corrupted_blocks.push(block_id.to_string());
 		}

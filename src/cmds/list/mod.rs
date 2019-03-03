@@ -33,11 +33,11 @@ pub fn execute(args: &ArgMatches) {
 	};
 
 	// TODO: Push into a vec, sort alphabetically, and then print
-	for encrypted_archive_name in &encrypted_archive_names {
-		let archive_name = match keystore.decrypt_archive_name(encrypted_archive_name) {
+	for (archive_id, encrypted_archive_name) in &encrypted_archive_names {
+		let archive_name = match keystore.decrypt_archive_name(archive_id, encrypted_archive_name) {
 			Ok(name) => name,
 			Err(err) => {
-				warn!("Could not decrypt one of the archive names, '{}', because: {}", encrypted_archive_name.to_string(), err);
+				warn!("Could not decrypt one of the archive names belonging to ArchiveID: {}, because: {}", archive_id.to_string(), err);
 				continue;
 			}
 		};

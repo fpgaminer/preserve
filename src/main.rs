@@ -3,7 +3,6 @@ mod newtype_macros;
 mod keystore;
 mod archive;
 mod backend;
-mod block;
 mod cmds;
 mod logger;
 mod error;

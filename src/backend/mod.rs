@@ -1,4 +1,4 @@
-use crate::keystore::{EncryptedArchiveName, EncryptedArchive, EncryptedBlock, BlockId};
+use crate::keystore::{ArchiveId, EncryptedArchiveName, EncryptedArchiveMetadata, EncryptedBlock, BlockId};
 use crate::error::*;
 use url::Url;
 
@@ -12,9 +12,9 @@ pub trait Backend {
 	fn store_block(&mut self, id: &BlockId, data: &EncryptedBlock) -> Result<()>;
 	fn fetch_block(&mut self, id: &BlockId) -> Result<EncryptedBlock>;
 
-	fn store_archive(&mut self, name: &EncryptedArchiveName, data: &EncryptedArchive) -> Result<()>;
-	fn fetch_archive(&mut self, name: &EncryptedArchiveName) -> Result<EncryptedArchive>;
-	fn list_archives(&mut self) -> Result<Vec<EncryptedArchiveName>>;
+	fn store_archive(&mut self, id: &ArchiveId, name: &EncryptedArchiveName, data: &EncryptedArchiveMetadata) -> Result<()>;
+	fn fetch_archive(&mut self, id: &ArchiveId) -> Result<EncryptedArchiveMetadata>;
+	fn list_archives(&mut self) -> Result<Vec<(ArchiveId, EncryptedArchiveName)>>;
 }
 
 

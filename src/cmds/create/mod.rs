@@ -1,8 +1,7 @@
 use rusqlite::types::ToSql;
-use crate::keystore::{KeyStore, Secret};
+use crate::keystore::{KeyStore, BlockId};
 use std::fs;
 use std::io::{Read, BufReader};
-use crate::block::BlockStore;
 use std::path::{Path, PathBuf};
 use std::os::unix::fs::MetadataExt;
 use std::string::ToString;
@@ -27,11 +26,6 @@ pub fn execute(args: &ArgMatches) {
 	config.dereference_symlinks = args.is_present("dereference");
 	config.one_file_system = args.is_present("one-file-system");
 
-	if backup_name.as_bytes().len() >= 128 {
-		error!("Backup name must be less than 128 bytes (UTF-8)");
-		return;
-	}
-
 	let keystore = match KeyStore::load_from_path(args_keyfile) {
 		Ok(keystore) => keystore,
 		Err(err) => {
@@ -39,8 +33,6 @@ pub fn execute(args: &ArgMatches) {
 			return;
 		}
 	};
-
-	let block_store = BlockStore::new(&keystore);
 
 	let mut backend = match backend::backend_from_backend_path(args_backend) {
 		Ok(backend) => backend,
@@ -52,7 +44,7 @@ pub fn execute(args: &ArgMatches) {
 
 	// Build archive
 	let archive = {
-		let mut builder = match ArchiveBuilder::new(config, &target_directory, &mut *backend, &block_store) {
+		let mut builder = match ArchiveBuilder::new(config, &target_directory, &mut *backend, &keystore) {
 			Ok(builder) => builder,
 			Err(err) => {
 				error!("There was a problem initializing the archive builder: {}", err);
@@ -98,14 +90,14 @@ pub fn execute(args: &ArgMatches) {
 	};
 
 	info!("Writing archive...");
-	let (encrypted_archive_name, encrypted_archive) = match archive.encrypt(&keystore) {
+	let (archive_id, encrypted_archive_name, encrypted_archive) = match archive.encrypt(&keystore) {
 		Ok(x) => x,
 		Err(err) => {
 			error!("There was a problem encrypting the backup: {}", err);
 			return;
 		}
 	};
-	match backend.store_archive(&encrypted_archive_name, &encrypted_archive) {
+	match backend.store_archive(&archive_id, &encrypted_archive_name, &encrypted_archive) {
 		Ok(_) => (),
 		Err(err) => {
 			error!("There was a problem storing the archive: {}", err);
@@ -166,11 +158,11 @@ struct ArchiveBuilder<'a> {
 	path_ignore_list: HashSet<PathBuf>,
 	files: Vec<ArchiveBuilderFile>,
 	backend: &'a mut Backend,
-	block_store: &'a BlockStore<'a>,
+	keystore: &'a KeyStore,
 }
 
 impl<'a> ArchiveBuilder<'a> {
-	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, block_store: &'a BlockStore) -> Result<ArchiveBuilder<'a>> {
+	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, keystore: &'a KeyStore) -> Result<ArchiveBuilder<'a>> {
 		let base_path = if base_path.as_ref().is_relative() {
 			env::current_dir()?.join(base_path)
 		} else {
@@ -206,7 +198,7 @@ impl<'a> ArchiveBuilder<'a> {
 			path_ignore_list,
 			files: Vec::new(),
 			backend,
-			block_store,
+			keystore,
 		})
 	}
 
@@ -529,7 +521,7 @@ impl<'a> ArchiveBuilder<'a> {
 			}
 
 			info!("Reading file: {}", file.file.path);
-			match read_file(file, &self.base_path, &cache_db, self.block_store, self.backend, progress, self.total_size)? {
+			match read_file(file, &self.base_path, &cache_db, self.keystore, self.backend, progress, self.total_size)? {
 				Some(blocks) => file.file.blocks.extend(blocks),
 				None => file.missing = true,
 			};
@@ -545,7 +537,7 @@ impl<'a> ArchiveBuilder<'a> {
 }
 
 
-fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64) -> Result<Option<Vec<Secret>>> {
+fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, keystore: &KeyStore, backend: &mut Backend, progress: u64, total_size: u64) -> Result<Option<Vec<BlockId>>> {
 	let path = base_path.as_ref().join(&file.file.path);
 	let canonical_path = match file.canonical_path.clone() {
 		Some(canonical_path) => canonical_path,
@@ -572,12 +564,12 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 			// The file is cached, but are all the blocks available in the current block store?
 			let blocks_str: String = blocks_str;
 
-			match serde_json::from_str::<Vec<Secret>>(&blocks_str) {
+			match serde_json::from_str::<Vec<BlockId>>(&blocks_str) {
 				Ok(blocks) => {
 					let mut all_blocks_exist = true;
 
 					for block in &blocks {
-						if !block_store.block_exists(block, backend)? {
+						if !backend.block_exists(block)? {
 							all_blocks_exist = false;
 							break;
 						}
@@ -589,7 +581,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 					}
 				},
 				Err(_) => {
-					warn!("Bad block secret encoding in the cache database.  The cache database might be corrupted.");
+					warn!("Bad block id encoding in the cache database.  The cache database might be corrupted.");
 				},
 			}
 		},
@@ -617,7 +609,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		};
 
 		// Read file contents
-		let (blocks, should_retry) = read_file_inner(&path, block_store, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size)?;
+		let (blocks, should_retry) = read_file_inner(&path, keystore, backend, progress, total_size, file.file.mtime, file.file.mtime_nsec, file.file.size)?;
 
 		let blocks = match blocks {
 			Some(blocks) => blocks,
@@ -649,7 +641,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 
 // Used by read_file.  read_file checks the cache, etc.  This will actually read the file into blocks.
 // If any file modifications are detected while reading, this function will return (None, true) to indicate the caller that it should retry (if it wishes).
-fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<Secret>>, bool)> {
+fn read_file_inner<P: AsRef<Path>>(path: P, keystore: &KeyStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<BlockId>>, bool)> {
 	let reader_file = match fs::File::open(&path) {
 		Ok(f) => f,
 		Err(err) => {
@@ -694,9 +686,15 @@ fn read_file_inner<P: AsRef<Path>>(path: P, block_store: &BlockStore, backend: &
 
 		total_read += buffer.len();
 
-		let secret = block_store.new_block_from_plaintext(&buffer, backend)?;
-		// TODO: Should we implement ToString for Secret and use that instead?
-		blocks.push(secret);
+		// Encrypt and store block in backend (if it doesn't already exist)
+		let (block_id, encrypted_block) = keystore.encrypt_block(&buffer);
+
+		if !backend.block_exists(&block_id)? {
+			// Block doesn't exist in backend; store it
+			backend.store_block(&block_id, &encrypted_block)?;
+		}
+
+		blocks.push(block_id);
 
 		if (total_read % (64*1024*1024)) == 0 {
 			info!("Progress: {}MB of {}MB", (progress + total_read as u64) / (1024*1024), total_size / (1024*1024));
