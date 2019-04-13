@@ -4,14 +4,6 @@ This document describes the cryptography used by Preserve.
 
 ## Overview
 
-The goals of Preserve's cryptography:
-
- * Protect the privacy and safety of users.
- * Be simple.
- * Require as little trust as possible.
-
-Speed comes secondary to these primary goals; we often opt for security at the cost of speed.  Simple constructions are easier to implement with less bugs, and easier to audit.  Simple implementations are often chosen at the cost of speed.
-
 The current system provides the following (as long as your keys are safe):
 
  * The contents of your backups cannot be read by attackers, even if your backups are stolen/leaked.
@@ -30,9 +22,9 @@ Preserve is not weak to the usual failings of secure deduplication (e.g. confirm
 
 Preserve uses the SIV construction to efficiently achieve its goal of secure deduplication.  The SIV construction makes encryption of blocks deterministic and provides each with a unique ID that can be used to reference the encrypted data.  SIV and its security proof are provided in the citation (Deterministic authenticated-encryption).  Preserve is thus DAE secure.  The SIV construction requires a PRF-secure primitive, and an IND$-secure IV cipher.  In Preserve we use HMAC-SHA-512-256 as the PRF-secure primitive, and ChaCha20 wrapped by HMAC-SHA-512 as the IND$-secure cipher.
 
-HMAC-SHA-512-256 (which is HMAC-SHA-512 truncated to 256-bits, not HMAC-SHA-512/256) is used because: it's faster on 64-bit platforms than HMAC-SHA-256; it is well seasoned, unlike potentially better functions like Blake, while still being fast enough; it's a random oracle according to the citation (Merkle-Damgård revisited); the HMAC construction has been shown to provide additional security when the underlying function fails, so it's a potentially more secure choice compared to SHA-512-256 even though SHA-512-256 has all the same properties.
+HMAC-SHA-512-256 (which is HMAC-SHA-512 truncated to 256-bits, not HMAC-SHA-512/256) is used because: it's faster on 64-bit platforms than HMAC-SHA-256; it is well seasoned, unlike potentially better functions like Blake, while still being fast enough; it's a random oracle according to the citation (Merkle-Damgård revisited); the HMAC construction has been shown to provide additional security when the underlying function fails, so it's a potentially more robust choice compared to SHA-512-256 even though SHA-512-256 has all the same properties.
 
-ChaCha20 is wrapped by HMAC-SHA-512 using `HMAC-SHA-512(key, IV)` to derive a 256-bit key and 64-bit nonce for the invocation of ChaCha20.  Basically it turns ChaCha20 into a cipher with a 256-bit nonce.  This is used because the usual ChaCha20 cipher only accepts a 64-bit nonce, while our SIV implementation calls for 256-bits.  Reasons why we didn't use something else: XChaCha20 is a commonly used extension of ChaCha20 and derives its security straightforwardly from the XSalsa20 paper, however it only has a 192-bit nonce.  192-bits *might* be enough.  I would need to review the security proof for the SIV construction in-depth to know for sure how the security margin is affected by reducing the nonce space.  An XXChaCha20 primitive could be invented (three-layer cascade), but this requires studying the XSalsa20 security proof in depth to see if it covers the three-layer case.  Both options are likely secure, but require additional scrutiny (by myself and anyone reviewing Preserve's security).  In contrast we know for sure that HMAC-SHA-512 wrapped ChaCha20 fulfills the requirements and we already have HMAC-SHA-512.
+ChaCha20 is wrapped by HMAC-SHA-512 using `HMAC-SHA-512(key, IV)` to derive a 256-bit key and 64-bit nonce for the invocation of ChaCha20.  Basically it turns ChaCha20 into a cipher with a 256-bit nonce.  This is used because the usual ChaCha20 cipher only accepts a 64-bit nonce, while our SIV implementation calls for 256-bits.  Reasons why we didn't use something else: XChaCha20 is a commonly used extension of ChaCha20 and derives its security straightforwardly from the XSalsa20 paper, however it only has a 192-bit nonce.  192-bits *might* be enough.  I would need to review the security proof for the SIV construction in-depth to know for sure how the security margin is affected by reducing the nonce space.  An XXChaCha20 primitive could be invented (three-layer cascade), but this requires studying the XSalsa20 security proof in depth to see if it covers the three-layer case.  Both options are likely secure, but require additional scrutiny (by myself and anyone reviewing Preserve's security).  In contrast we know for sure that HMAC-SHA-512 wrapped ChaCha20 fulfills the requirements and we already use HMAC-SHA-512 elsewhere.
 
 SIV also calls for an Encode function, used to encode the input to the PRF.  It must be such that Encode uniquely encodes its inputs (given any input A, there exists no input B where `A!=B` and `Encode(A) = Encode(B)`).  Preserve simply uses `Encode(AAD, Plaintext) = AAD || Plaintext || le64encode(AAD.length) || le64encode(Plaintext.length)`.
 
@@ -153,7 +145,7 @@ Given the plaintext for a block, encryption is as follows:
 BlockId, EncryptedBlock = SivEncrypt (Keystore.block, [], Block)
 ```
 
-Store `BlockId = EncryptedBlock` in the backend.  Store `BlockId` in the archive.
+Store `BlockId = EncryptedBlock` in the backend.  Reference using `BlockId` in the archive.
 
 
 ### Decryption
@@ -195,9 +187,9 @@ Metadata = SivDecrypt (Keystore.archive_metadata, MetadataId, ArchiveId, Encrypt
 
 ### Notes
 
-Blocklist is left plaintext so the backend can read it and use it for refcounting.  The BlockIds themselves are opaque and so don't reveal any sensitive information, other than which blocks are associated with which archives (which the backend could infer from usage patterns regardless).
+Blocklist is left plaintext so the backend can read it and use it for refcounting.  The BlockIds themselves are opaque and don't reveal any sensitive information, other than which blocks are associated with which archives (which the backend could infer from usage patterns regardless).
 
-Archives are stored in pieces so the backend can return any piece when asked.  For example, when asked to list all the archives the backend can just return a list of EncryptedNames.
+Archives are stored in pieces (EncryptedName, Blocklist, EncryptedMetadata, etc) so the backend can return any piece when asked.  For example, when asked to list all the archives the backend can just return a list of EncryptedNames.
 
 It is important to run `SivDecrypt` on the BlocklistId to authenticate the Blocklist.
 
@@ -209,11 +201,19 @@ A Keystore contains all the keys needed to encrypt and decrypt backups.  A Keyst
 
 The Keystore is derived from the MasterKey using `PBKDF2-HMAC-512 (password=MasterKey, salt='', iterations=1, length=*)`, where length depends on the amount of keying material that Keystore needs.  It is important to note that `PBKDF2(length=100)` is equal to `PBKDF2(length=200)[..100]` as long as the other parameters are the same.  This is what allows us to add new keys to the Keystore later.
 
-The MasterKey can be encrypted using a passphrase and stored on one or several backends.  Encryption uses scrypt KDF with parameters that require an hour on the average computer.  This hellishly difficult KDF is used because the passphrase is rarely needed (only during recovery on a new computer) and it provides exceptional security in the case where the encrypted MasterKey is leaked.  This makes it safer for MasterKeys to be stored on backends, which allows a more convenient system.
+The MasterKey can be encrypted using a passphrase and stored on one or several backends.  Encryption uses scrypt KDF with parameters that require an hour on the average computer.  This hellishly difficult KDF is used because the passphrase is rarely needed (only during recovery on a new computer) and it provides exceptional security in the case where the encrypted MasterKey is leaked.  This makes it safer for MasterKeys to be stored on backends, which allows a more convenient system (users can fully recover by just having access to a backend and their password).
 
 Preserve is expected to keep a decrypted copy of the Keystore locally, so backups can be made without the user's password.
 
 The Keystore has separate sets of encryption keys for every type of object that gets encrypted (Blocks, Archive names, etc).  Keying material is "free", so we might as well.  It also means that the set of IDs for each type of object is different, so we don't accidentally mix up data.
+
+```
+Keystore:
+	block: SivEncryptionKeys
+	archive_name: SivEncryptionKeys
+	archive_blocklist: SivEncryptionKeys
+	archive_metadata: SivEncryptionKeys
+```
 
 
 ### Encryption
