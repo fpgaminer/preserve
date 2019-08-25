@@ -24,8 +24,7 @@ impl FileBackend {
 	fn safely_write_file<P: AsRef<Path>>(&self, destination: P, data: &[u8]) -> Result<()> {
 		// First, write to a temporary file.
 		let temppath = {
-			let mut rng = OsRng::new().expect("OsRng failed during initialization");
-			let tempname: String = rng.sample_iter(&rand::distributions::Alphanumeric).take(32).collect();
+			let tempname: String = OsRng.sample_iter(&rand::distributions::Alphanumeric).take(32).collect();
 			let temppath = self.backup_dir.join("temp");
 			fs::create_dir_all(&temppath).unwrap_or(());
 			temppath.join(tempname)

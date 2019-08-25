@@ -34,12 +34,12 @@ macro_rules! newtype_from_slice (($newtype:ident, $len:expr) => (
     }
 
     #[allow(dead_code)]
-	pub fn from_rng(rng: &mut ::rand::rngs::OsRng) -> $newtype {
+	pub fn from_rng() -> $newtype {
         use rand::RngCore;
 		let mut n = $newtype([0; $len]);
 		{
 			let $newtype(ref mut b) = n;
-			rng.fill_bytes(b);
+			::rand::rngs::OsRng.fill_bytes(b);
 		}
 		n
 	}

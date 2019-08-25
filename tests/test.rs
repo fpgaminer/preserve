@@ -263,7 +263,7 @@ impl TestGenerator {
 		loop {
 			// 12% chance of being random alphanumeric unicode char, otherwise use alphabet above
 			let c: char = if self.rng.next_u32() < 0x2000_0000 {
-				self.rng.sample_iter(&rand::distributions::Standard).filter(|c: &char| c.is_alphanumeric()).next().unwrap()
+				(&mut self.rng).sample_iter(&rand::distributions::Standard).filter(|c: &char| c.is_alphanumeric()).next().unwrap()
 			} else {
 				*alphabet.choose(&mut self.rng).unwrap()
 			};
@@ -305,7 +305,7 @@ impl TestGenerator {
 				let chunk_size = cmp::min(buffer.len(), len - written);
 
 				if is_ascii {
-					let string_data: String = self.rng.sample_iter(&rand::distributions::Alphanumeric).take(chunk_size).collect();
+					let string_data: String = (&mut self.rng).sample_iter(&rand::distributions::Alphanumeric).take(chunk_size).collect();
 					writer.write_all(string_data.as_bytes()).unwrap();
 					written += string_data.len();
 				}
@@ -484,8 +484,7 @@ fn parse_rsync_output(output: &str) -> bool {
 // We use temporary directories for everything, so in the case of failure save the directories
 // for inspection, and then panic with the error message.
 fn handle_failed_restore<P: AsRef<Path>, Q: AsRef<Path>>(original_dir: P, restore_dir: Q, reason: &str, err: &str) {
-	let mut rng = rand::thread_rng();
-	let random_str: String = rng.sample_iter(&rand::distributions::Alphanumeric).take(10).collect();
+	let random_str: String = rand::thread_rng().sample_iter(&rand::distributions::Alphanumeric).take(10).collect();
 
 	fs::rename(original_dir, "/tmp/preserve-test-failed-original-".to_string() + &random_str).unwrap();
 	fs::rename(restore_dir, "/tmp/preserve-test-failed-restore-".to_string() + &random_str).unwrap();

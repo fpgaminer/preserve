@@ -11,7 +11,6 @@ use std::path::Path;
 use std::fs;
 use std::convert::TryFrom;
 use data_encoding::HEXLOWER_PERMISSIVE;
-use rand::rngs::OsRng;
 
 
 // We liberally use newtypes to help prevent accidentally mixing up data, and making it more explicit what kind of data
@@ -137,8 +136,7 @@ pub struct KeyStore {
 impl KeyStore {
 	/// Create a new, random, KeyStore
 	pub fn new() -> KeyStore {
-		let mut rng = OsRng::new().expect("OsRng failed to initialize");
-		let master_key = HmacKey::from_rng(&mut rng);
+		let master_key = HmacKey::from_rng();
 
 		KeyStore::from_master_key(master_key)
 	}
@@ -261,8 +259,7 @@ mod test {
 	// PBKDF2 output should be extendable (i.e. we can add keys to the KeyStore later by increasing the length passed to PBKDF2)
 	#[test]
 	fn test_pbkdf2_extendable() {
-		let mut rng = OsRng::new().expect("OsRng failed to initialize");
-		let key = HmacKey::from_rng(&mut rng);
+		let key = HmacKey::from_rng();
 
 		let out1 = {
 			let mut output = vec![0u8; 100];
@@ -285,22 +282,20 @@ mod test {
 	// Exercises the encryption system
 	#[test]
 	fn test_encryption() {
-		let mut rng = OsRng::new().expect("OsRng failed to initialize");
-
 		let keys = SivEncryptionKeys {
-			siv_key: HmacKey::from_rng(&mut rng),
-			cipher_key: HmacKey::from_rng(&mut rng),
+			siv_key: HmacKey::from_rng(),
+			cipher_key: HmacKey::from_rng(),
 		};
 
 		let other_keys = SivEncryptionKeys {
-			siv_key: HmacKey::from_rng(&mut rng),
-			cipher_key: HmacKey::from_rng(&mut rng),
+			siv_key: HmacKey::from_rng(),
+			cipher_key: HmacKey::from_rng(),
 		};
 
-		let mut plaintext = vec![0u8; rng.gen_range(16, 1024)];
-		let mut aad = vec![0u8; rng.gen_range(0, 1024)];
-		rng.fill(&mut plaintext[..]);
-		rng.fill(&mut aad[..]);
+		let mut plaintext = vec![0u8; OsRng.gen_range(16, 1024)];
+		let mut aad = vec![0u8; OsRng.gen_range(0, 1024)];
+		OsRng.fill(&mut plaintext[..]);
+		OsRng.fill(&mut aad[..]);
 
 		// The same aad and plaintext should result in the same siv and ciphertext
 		let (siv1, ciphertext1) = keys.encrypt(&aad, &plaintext);
@@ -325,7 +320,7 @@ mod test {
 
 		// Ciphertext should be completely different even if only one byte of plaintext is different.
 		let mut mutated_plaintext = plaintext.clone();
-		*mutated_plaintext.choose_mut(&mut rng).unwrap() ^= 0xa;
+		*mutated_plaintext.choose_mut(&mut OsRng).unwrap() ^= 0xa;
 		let (siv5, ciphertext5) = keys.encrypt(&aad, &plaintext[..plaintext.len() - 1]);
 		let (siv6, ciphertext6) = keys.encrypt(&aad, &mutated_plaintext);
 		assert_ne!(siv1, siv5);
