@@ -9,6 +9,7 @@ use std::str::FromStr;
 use crate::error::*;
 use std::path::Path;
 use std::fs;
+use std::convert::TryFrom;
 use data_encoding::HEXLOWER_PERMISSIVE;
 use rand::rngs::OsRng;
 
@@ -47,7 +48,7 @@ pub struct EncryptedBlock(pub Vec<u8>);
 pub struct EncryptedArchiveMetadata(pub Vec<u8>);
 
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 struct SivEncryptionKeys {
 	/// Used to calculate the siv for plaintext
 	siv_key: HmacKey,
@@ -74,6 +75,10 @@ impl SivEncryptionKeys {
 		Some(plaintext)
 	}
 
+	// TODO: This method should be private
+	/// Encrypts or decrypts data using the combination of self.cipher_key and nonce.
+	/// First derives an encryption key using HMAC-SHA-512 (cipher_key, nonce)
+	/// and then performs ChaCha20 (derived_key, data).
 	fn cipher(&self, nonce: &SIV, data: &[u8]) -> Vec<u8> {
 		let big_key = {
 			let mut hmac = Hmac::new(Sha512::new(), &self.cipher_key[..]);
@@ -89,14 +94,15 @@ impl SivEncryptionKeys {
 		output
 	}
 
+	// TODO: This method should be private
+	/// Calculate the unique SIV for the combination of self.siv_key, aad, and plaintext.
+	/// Equivilent to: HMAC-SHA-512-256 (siv_key, aad || plaintext || le64(aad.length) || le64(plaintext.length))
 	fn calculate_siv(&self, aad: &[u8], plaintext: &[u8]) -> SIV {
-		assert!(std::mem::size_of::<u64>() >= std::mem::size_of::<usize>());
-
 		let mut hmac = Hmac::new(Sha512::new(), &self.siv_key[..]);
 		hmac.input(aad);
 		hmac.input(plaintext);
-		hmac.input(&(aad.len() as u64).to_le_bytes());
-		hmac.input(&(plaintext.len() as u64).to_le_bytes());
+		hmac.input(&u64::try_from(aad.len()).expect("calculate_siv: length did not fit into u64").to_le_bytes());
+		hmac.input(&u64::try_from(plaintext.len()).expect("calculate_siv: length did not fit into u64").to_le_bytes());
 
 		// Truncated to 256-bits
 		SIV::from_slice(&hmac.result().code()[..32]).expect("internal error")
@@ -137,7 +143,9 @@ impl KeyStore {
 		KeyStore::from_master_key(master_key)
 	}
 
-	/// Derive the KeyStore from master_key
+	/// Derive the KeyStore from master_key.
+	/// This is done using PBKDF2-HMAC-SHA512 (password=master_key, salt=[], iterations=1)
+	/// to derive all the other keys in the KeyStore.
 	pub fn from_master_key(master_key: HmacKey) -> KeyStore {
 		let raw_keys = {
 			let mut raw_keys = vec![0u8; 4 * 256];
@@ -241,6 +249,7 @@ mod test {
 	use data_encoding::HEXLOWER_PERMISSIVE;
 	use rand::rngs::OsRng;
 	use rand::Rng;
+	use rand::seq::SliceRandom;
 
 	// TODO: As a sanity check, we should perform some statistical tests on the outputs from all the encryption functions.
 	// If they are implemented correctly, all output should look indistiguishable from random.
@@ -249,9 +258,9 @@ mod test {
 		HEXLOWER_PERMISSIVE.decode(hexstr.as_bytes()).unwrap()
 	}
 
+	// PBKDF2 output should be extendable (i.e. we can add keys to the KeyStore later by increasing the length passed to PBKDF2)
 	#[test]
 	fn test_pbkdf2_extendable() {
-		// Tests to make sure that PBKDF2 generates extendable output (i.e. we can add keys to the KeyStore later by increasing the length passed to PBKDF2)
 		let mut rng = OsRng::new().expect("OsRng failed to initialize");
 		let key = HmacKey::from_rng(&mut rng);
 
@@ -273,9 +282,9 @@ mod test {
 		assert_eq!(out1, out2);
 	}
 
+	// Exercises the encryption system
 	#[test]
 	fn test_encryption() {
-		// Exercises the encryption system
 		let mut rng = OsRng::new().expect("OsRng failed to initialize");
 
 		let keys = SivEncryptionKeys {
@@ -299,22 +308,30 @@ mod test {
 		assert_eq!(siv1, siv2);
 		assert_eq!(ciphertext1, ciphertext2);
 
-		// But not if the key changes
-		assert_ne!((siv1.clone(), ciphertext1.clone()), other_keys.encrypt(&aad, &plaintext));
+		// But not if the key changes (NOTE: Random chance could result in ciphertexts being equal, but the liklihood is impossibly small for our test case (which has a minimum 16 byte plaintext))
+		let (other_siv, other_ciphertext) = other_keys.encrypt(&aad, &plaintext);
+		assert_ne!(other_siv, siv1);
+		assert_ne!(other_ciphertext, ciphertext1);
 
 		// Changing aad or plaintext should change siv and ciphertext
-		let (siv3, ciphertext3) = keys.encrypt(b"different", &plaintext);
-		let (siv4, ciphertext4) = keys.encrypt(&aad, b"different");
+		let (siv3, ciphertext3) = keys.encrypt(b"different inputs", &plaintext);
+		let (siv4, ciphertext4) = keys.encrypt(&aad, b"different inputs");
 		assert_ne!(siv1, siv3);
 		assert_ne!(ciphertext1, ciphertext3);
 		assert_ne!(siv1, siv4);
 		assert_ne!(ciphertext1, ciphertext4);
 		assert_ne!(siv3, siv4);
+		assert_ne!(ciphertext3, ciphertext4);
 
 		// Ciphertext should be completely different even if only one byte of plaintext is different.
+		let mut mutated_plaintext = plaintext.clone();
+		*mutated_plaintext.choose_mut(&mut rng).unwrap() ^= 0xa;
 		let (siv5, ciphertext5) = keys.encrypt(&aad, &plaintext[..plaintext.len() - 1]);
+		let (siv6, ciphertext6) = keys.encrypt(&aad, &mutated_plaintext);
 		assert_ne!(siv1, siv5);
 		assert_ne!(&ciphertext1[..plaintext.len() - 1], &ciphertext5[..]);
+		assert_ne!(siv1, siv6);
+		assert_ne!(&ciphertext1, &ciphertext6);
 
 		// Length preserving
 		assert_eq!(plaintext.len(), ciphertext1.len());
@@ -325,7 +342,7 @@ mod test {
 		// Using the wrong key, siv, aad, or ciphertext should cause decryption errors
 		assert!(keys.decrypt(&aad, &siv3, &ciphertext1).is_none());
 		assert!(keys.decrypt(&aad, &siv1, &ciphertext3).is_none());
-		assert!(keys.decrypt(b"different", &siv1, &ciphertext1).is_none());
+		assert!(keys.decrypt(b"this is not the aad you are looking for", &siv1, &ciphertext1).is_none());
 		assert!(keys.decrypt(&aad, &siv1, &ciphertext1[..ciphertext1.len()-1]).is_none());
 		assert!(other_keys.decrypt(&aad, &siv1, &ciphertext1).is_none());
 	}
@@ -345,7 +362,7 @@ mod test {
 		assert_eq!(siv, test_siv);
 		assert_eq!(ciphertext, test_ciphertext);
 
-		// This test vector was generated using an indepedent Python implementation
+		// This test vector was generated using an independent Python implementation
 		let test_keys = SivEncryptionKeys {
 			siv_key: HmacKey::from_slice(&from_hexstr("bf2bb483cb12aa8fb38370c3f1debfbe6f357ab0b4f0468107e95fa744f8f8419ad3a24dc2789e815ddd4a91852c96b79c6a79da6fd0b90a80359f1f91630a66389788d704e011870c04211527c7175f8dfa560779113ebe2f2486bde5d1cef883d9ad5b80f2e0530782c2d287107023f7b5834f98a370bb3310b39d58376d28")).unwrap(),
 			cipher_key: HmacKey::from_slice(&from_hexstr("0b4d46a0f976497075238d681c7738c128eaeed7394eb700af0a00f7a452193cad43d2fa99360da728f42d1ddd45a4bc8c14ffe0eb4a40e33bf9180c5bb1201ef25615b55dd8b109f6a9f019157460aeae57bc2dd1ab6b0676386cbfd30d60ce96413dee81a339fc7d537f9a5c21bcf9836e9e40c68edaaf6a0fb18a0f7a1338")).unwrap(),
@@ -385,18 +402,18 @@ mod test {
 		assert_eq!(restored_keystore.master_key, master_key);
 	}
 
+	// Tests the higher level APIs (encrypt block, encrypt archive, etc)
+	// Mostly just sanity checks, since other tests verify that the underlying encryption functions are correct.
 	#[test]
 	fn test_encrypt_objects() {
-		// Tests the higher level APIs (encrypt block, encrypt archive, etc)
-		// Mostly just sanity checks, since other tests verify that the underlying encryption functions are correct.
 		let keystore = KeyStore::new();
-		let test_data = "just data";
+		let test_data = "just plain old data";
 
 		let (block_id, mut block_ciphertext) = keystore.encrypt_block(test_data.as_bytes());
 		let (archive_id, name_ciphertext) = keystore.encrypt_archive_name(test_data);
 		let metadata_ciphertext = keystore.encrypt_archive_metadata(&archive_id, test_data.as_bytes());
 
-		// Sanity checks
+		// Decryption should work
 		assert_eq!(test_data.as_bytes(), &keystore.decrypt_block(&block_id, &block_ciphertext).unwrap()[..]);
 		assert_eq!(test_data, keystore.decrypt_archive_name(&archive_id, &name_ciphertext).unwrap());
 		assert_eq!(test_data.as_bytes(), &keystore.decrypt_archive_metadata(&archive_id, &metadata_ciphertext).unwrap()[..]);
@@ -405,7 +422,7 @@ mod test {
 		assert_ne!(&block_id[..], &archive_id[..]);
 		assert_ne!(block_ciphertext.0, name_ciphertext.0);
 
-		// Sanity check
+		// Decryption should fail if ciphertext is modified
 		block_ciphertext.0[0] ^= 0xbe;
 		assert!(keystore.decrypt_block(&block_id, &block_ciphertext).is_err());
 
@@ -415,9 +432,9 @@ mod test {
 		assert_eq!(unicode_name, keystore.decrypt_archive_name(&archive_id, &name_ciphertext).unwrap());
 	}
 
+	// Tests to make sure the underlying Encode function is working correctly
 	#[test]
 	fn test_encode() {
-		// Tests to make sure the underlying Encode function is working correctly
 		let keystore = KeyStore::new();
 
 		let test1_a = b"a";
@@ -427,5 +444,30 @@ mod test {
 		let test2_b = b"b";
 
 		assert_ne!(keystore.block_keys.encrypt(test1_a, test1_b).0, keystore.block_keys.encrypt(test2_a, test2_b).0);
+	}
+
+	// This test makes sure that the encryption system is using the right keys for handling different types of objects.
+	// For example, blocks should be encrypted using the block keys, not the archive name keys.
+	#[test]
+	fn test_object_encryption_keys_unique() {
+		let keystore = KeyStore::new();
+		let test_data = "just plain old data";
+
+		let (block_id, block_ciphertext) = keystore.encrypt_block(test_data.as_bytes());
+		let (archive_id, name_ciphertext) = keystore.encrypt_archive_name(test_data);
+		let metadata_ciphertext = keystore.encrypt_archive_metadata(&archive_id, test_data.as_bytes());
+
+		// Now try to decrypt, but corrupt all the other keys that shouldn't be used.  If the system is using the right key, that decryption should still be successful.
+		let mut modified_keystore = KeyStore::new();
+		modified_keystore.block_keys = keystore.block_keys.clone();
+		assert_eq!(test_data.as_bytes(), &modified_keystore.decrypt_block(&block_id, &block_ciphertext).unwrap()[..]);
+
+		let mut modified_keystore = KeyStore::new();
+		modified_keystore.archive_name_keys = keystore.archive_name_keys.clone();
+		assert_eq!(test_data, modified_keystore.decrypt_archive_name(&archive_id, &name_ciphertext).unwrap());
+
+		let mut modified_keystore = KeyStore::new();
+		modified_keystore.metadata_keys = keystore.metadata_keys.clone();
+		assert_eq!(test_data.as_bytes(), &modified_keystore.decrypt_archive_metadata(&archive_id, &metadata_ciphertext).unwrap()[..]);
 	}
 }

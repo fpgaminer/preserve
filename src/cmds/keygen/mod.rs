@@ -7,7 +7,7 @@ use log::error;
 
 pub fn execute(args: &ArgMatches) {
 	// Open output file/stdout for writing
-	let file: Box<Write> = match args.value_of("keyfile") {
+	let file: Box<dyn Write> = match args.value_of("keyfile") {
 		Some(path) => {
 			// Won't overwrite existing file
 			let file = match OpenOptions::new().write(true).create_new(true).open(path) {

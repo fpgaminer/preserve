@@ -158,7 +158,7 @@ impl TestConfig {
 
 
 struct TestGenerator {
-	rng: Box<RngCore>,
+	rng: Box<dyn RngCore>,
 }
 
 
@@ -204,7 +204,7 @@ impl TestGenerator {
 
 
 				match self.rng.gen_range(0, 100) {
-					0 ... 49 => {
+					0 ..= 49 => {
 						// File: 50%
 						self.generate_random_file(&path);
 
@@ -214,13 +214,13 @@ impl TestGenerator {
 
 						all_files.push(path);
 					},
-					50 ... 79 => {
+					50 ..= 79 => {
 						// Folder: 30%
 						self.generate_random_folder(&path);
 						all_folders.push(path.clone());
 						tasks.push(path.clone());
 					},
-					80 ... 89 => {
+					80 ..= 89 => {
 						// Symlink: 10%
 						self.generate_random_symlink(&path, &all_files, &all_folders);
 						number_of_symlinks += 1;
@@ -286,9 +286,9 @@ impl TestGenerator {
 	fn generate_random_file<P: AsRef<Path>>(&mut self, path: P) {
 		let mode = (self.rng.next_u32() & 511) | 0o600;
 		let len = match self.rng.gen_range(0, 100) {
-			0 ... 9 => 0, // Empty (10%)
-			10 ... 59 => self.rng.gen_range(1, 1024), // Small (50%)
-			60 ... 89 => self.rng.gen_range(1, 2*1024*1024), // Medium (30%)
+			0 ..= 9 => 0, // Empty (10%)
+			10 ..= 59 => self.rng.gen_range(1, 1024), // Small (50%)
+			60 ..= 89 => self.rng.gen_range(1, 2*1024*1024), // Medium (30%)
 			_ => self.rng.gen_range(1, 32*1024*1024), // Large (10%)
 		};
 

@@ -97,7 +97,7 @@ pub fn execute(args: &ArgMatches) {
 }
 
 
-fn fetch_and_decrypt_archive(name: &str, keystore: &KeyStore, backend: &mut Backend) -> Result<Archive> {
+fn fetch_and_decrypt_archive(name: &str, keystore: &KeyStore, backend: &mut dyn Backend) -> Result<Archive> {
 	let (archive_id, _) = keystore.encrypt_archive_name(&name);
 	let encrypted_archive = backend.fetch_archive(&archive_id)?;
 	Archive::decrypt(&archive_id, &encrypted_archive, &keystore)

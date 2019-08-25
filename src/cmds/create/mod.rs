@@ -157,12 +157,12 @@ struct ArchiveBuilder<'a> {
 	/// Currently only checks directories.
 	path_ignore_list: HashSet<PathBuf>,
 	files: Vec<ArchiveBuilderFile>,
-	backend: &'a mut Backend,
+	backend: &'a mut dyn Backend,
 	keystore: &'a KeyStore,
 }
 
 impl<'a> ArchiveBuilder<'a> {
-	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut Backend, keystore: &'a KeyStore) -> Result<ArchiveBuilder<'a>> {
+	fn new<P: AsRef<Path>>(config: Config, base_path: P, backend: &'a mut dyn Backend, keystore: &'a KeyStore) -> Result<ArchiveBuilder<'a>> {
 		let base_path = if base_path.as_ref().is_relative() {
 			env::current_dir()?.join(base_path)
 		} else {
@@ -537,7 +537,7 @@ impl<'a> ArchiveBuilder<'a> {
 }
 
 
-fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, keystore: &KeyStore, backend: &mut Backend, progress: u64, total_size: u64) -> Result<Option<Vec<BlockId>>> {
+fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_db: &rusqlite::Connection, keystore: &KeyStore, backend: &mut dyn Backend, progress: u64, total_size: u64) -> Result<Option<Vec<BlockId>>> {
 	let path = base_path.as_ref().join(&file.file.path);
 	let canonical_path = match file.canonical_path.clone() {
 		Some(canonical_path) => canonical_path,
@@ -555,7 +555,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 	};
 
 	// Check to see if we have this file in the cache
-	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
+	let result = cache_db.query_row("SELECT blocks FROM mtime_cache WHERE path=? AND mtime=? AND mtime_nsec=? AND size=?", &[&canonical_path_str.to_owned() as &dyn ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64)], |row| {
 		row.get(0)
 	});
 
@@ -632,7 +632,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 		};
 
 		let blocks_str = serde_json::to_string(&blocks).expect("internal error");
-		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned() as &ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str])?;
+		cache_db.execute("INSERT OR REPLACE INTO mtime_cache (path, mtime, mtime_nsec, size, blocks) VALUES (?,?,?,?,?)", &[&canonical_path_str.to_owned() as &dyn ToSql, &file.file.mtime, &file.file.mtime_nsec, &(file.file.size as i64), &blocks_str])?;
 
 		return Ok(Some(blocks));
 	}
@@ -641,7 +641,7 @@ fn read_file<P: AsRef<Path>>(file: &mut ArchiveBuilderFile, base_path: P, cache_
 
 // Used by read_file.  read_file checks the cache, etc.  This will actually read the file into blocks.
 // If any file modifications are detected while reading, this function will return (None, true) to indicate the caller that it should retry (if it wishes).
-fn read_file_inner<P: AsRef<Path>>(path: P, keystore: &KeyStore, backend: &mut Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<BlockId>>, bool)> {
+fn read_file_inner<P: AsRef<Path>>(path: P, keystore: &KeyStore, backend: &mut dyn Backend, progress: u64, total_size: u64, expected_mtime: i64, expected_mtime_nsec: i64, expected_size: u64) -> Result<(Option<Vec<BlockId>>, bool)> {
 	let reader_file = match fs::File::open(&path) {
 		Ok(f) => f,
 		Err(err) => {

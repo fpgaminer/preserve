@@ -1,7 +1,6 @@
  * Clean up TODOs and improve error reporting.
  * Test individual components of backup system (unit testing)
  * Add a config option, --dereference, which will handle symlinks by "dereferencing" them.  A symlink will become a regular file in the archive with the contents set to the the contents of the target.  This can be applied either during archive creation, or during extraction (implemented for create, but not restore).
- * Audit crypto
  * Have a service that actively tests the backups.  Download blocks and archives and check their HMAC.  Download an archive, decrypt, and try a block or two.  Do this every so often; often enough that everything is probabilistically checked at a reasonable frequency.
  * Option to backup to multiple backends
  * Clean up crypto-spec.md
@@ -30,3 +29,5 @@
  * Refcounting on the backend (need to implement the new backend API)
  * Add tests for verify command.
  * Add tests for list command.
+ * Should newtype_macros be a procedural macro instead?  Seems like it would create cleaner code.
+ * Replace rust-crypto dependency

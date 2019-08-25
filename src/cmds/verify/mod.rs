@@ -70,7 +70,7 @@ fn build_block_list(files: &[File], block_list: &mut HashSet<BlockId>) {
 }
 
 
-fn verify_blocks(block_list: &[BlockId], keystore: &KeyStore, backend: &mut Backend) {
+fn verify_blocks(block_list: &[BlockId], keystore: &KeyStore, backend: &mut dyn Backend) {
 	let mut corrupted_blocks = Vec::new();
 
 	for (idx, block_id) in block_list.iter().enumerate() {

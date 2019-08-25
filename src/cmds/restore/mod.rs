@@ -154,7 +154,7 @@ fn build_block_refcounts_helper(file: &File, download_cache: &mut HashMap<BlockI
 }
 
 
-fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut Backend) -> Result<()> {
+fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut dyn Backend) -> Result<()> {
 	let mut hardlink_map: HashMap<u64, PathBuf> = HashMap::new();
 	// List of all directories and the mtimes they need set.
 	// We set these after extracting all files, since extracting the files changes the mtime of
@@ -222,7 +222,7 @@ fn extract_files<P: AsRef<Path>>(config: &Config, files: &[File], base_path: P, 
 }
 
 
-fn extract_file<P: AsRef<Path>>(path: P, f: &File, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut Backend) -> Result<()> {
+fn extract_file<P: AsRef<Path>>(path: P, f: &File, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut dyn Backend) -> Result<()> {
 	// Don't overwrite existing files
 	let file = fs::OpenOptions::new().write(true).create_new(true).open(path.as_ref())?;
 	let mut writer = BufWriter::new(&file);
@@ -243,7 +243,7 @@ fn extract_file<P: AsRef<Path>>(path: P, f: &File, keystore: &KeyStore, cache_di
 }
 
 
-fn cache_fetch(block_id: &BlockId, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut Backend) -> Result<Vec<u8>> {
+fn cache_fetch(block_id: &BlockId, keystore: &KeyStore, cache_dir: &Path, download_cache: &mut HashMap<BlockId, DownloadCache>, backend: &mut dyn Backend) -> Result<Vec<u8>> {
 	let cache = download_cache.get_mut(block_id).expect("internal error");
 	let path = cache_dir.join(cache.id.to_string());
 
@@ -283,7 +283,6 @@ fn set_file_time(path: &Path, mtime: i64, mtime_nsec: i64) -> Result<()> {
 	use std::ffi::CString;
 	use std::os::unix::prelude::*;
 	use libc::{time_t, timespec, utimensat, c_long, AT_FDCWD, AT_SYMLINK_NOFOLLOW};
-	use std::io;
 
 	let times = [timespec {
 		tv_sec: mtime as time_t,
